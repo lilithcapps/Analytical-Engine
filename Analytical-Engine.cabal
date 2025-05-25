@@ -69,6 +69,8 @@ executable Analytical-Engine
     -- Other library packages from which modules are imported.
     build-depends:    base ^>=4.17.2.1
                     , text ^>=2.1.2
+                    , mtl  ^>=2.2.2
+                    , lens ^>=5.3.4
 
     -- Directories containing source files.
     hs-source-dirs:   app
