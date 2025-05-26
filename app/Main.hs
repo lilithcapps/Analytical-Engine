@@ -47,8 +47,8 @@ data VariableOperation =
   | Backwards Int
   deriving Show
 
-applyParameters :: [Operation] -> [Integer] -> [StoreValue]
-applyParameters ops params = states
+applyParameters :: [Integer] -> [Operation] -> [StoreValue]
+applyParameters params ops = states
   where
     store = params ++ [0,0..] :: StoreValue
     mill = (0, 0) :: MillValue
@@ -99,8 +99,8 @@ applyParameters ops params = states
         Right r -> Right r)
         | op <- ops]
 
-createOperationChain :: [UnboundOperation] -> [Int] -> [Operation]
-createOperationChain us vs = operationChain
+createOperationChain :: [Int] -> [UnboundOperation] -> [Operation]
+createOperationChain vs us = operationChain
   where
   -- this is lefties alone and righties as data with variable
   operations :: [Operation]
@@ -114,7 +114,7 @@ createOperationChain us vs = operationChain
             >>= \(v, e) -> put v >> return e
       pairVars (Right r) =
         get >>= \vars -> case vars of
-            []     -> error "ran out of vars :("
+            []   -> error "ran out of vars :("
             v:vs -> return (vs, Right (v, r))
           >>= \(v, e) -> put v >> return e
 
@@ -134,11 +134,17 @@ createOperationChain us vs = operationChain
         where
           more :: [(Operation, [Operation], [Operation])] -> [(Operation, [Operation], [Operation])]
           more ((c@(Right (Forwards n)), ps, ns):_) =
-            let nextTup = ((!! max 0 n) ns, reverse (take n ns) ++ (c : ps), tail . drop n $ ns) : more nextTup
+            let nextTup = (
+                  (!! max 0 n) ns,
+                  reverse (take n ns) ++ (c : ps),
+                  tail . drop n $ ns) : more nextTup
             in nextTup
           more ((c@(Right (Backwards n)), ps, ns):_) =
             let newPrevs = c : ps in
-            let nextTup = ((!! max 0 (n-1)) newPrevs, drop n newPrevs, reverse (take (n-1) newPrevs) ++ ns) : more nextTup
+            let nextTup = (
+                  (!! max 0 (n-1)) newPrevs,
+                  drop n newPrevs,
+                  reverse (take (n-1) newPrevs) ++ ns) : more nextTup
             in nextTup
           more ((c, ps, n:ns):_) =
             let nextTup = (n, c:ps, ns) : more nextTup
@@ -158,27 +164,34 @@ main = do
   let numbers :: [Integer]
       numbers = parseNumeric . lines . T.unpack <$> T.splitOn "-\r\n" numericFile
 
-  let storeValues = applyParameters (createOperationChain operations distributive) numbers
+  let storeValues = applyParameters numbers $ createOperationChain distributive operations
 
-  let inputOps = [Left Add, Right UnboundForwards, Left Divide, Right UnboundBackwards]
-  let inputVars = [1, 3]
-  let inputParams = [0, 0]
+  let inputOps = [
+        Left Add, 
+        Right UnboundSupplyZeroing, 
+        Right UnboundSupplyRetaining, 
+        Right UnboundStore,
+        Right UnboundStorePrimed
+        ]
+  let inputVars = [0, 1, 5, 6]
+  let inputParams = [5, 10]
 
-  let opChain = createOperationChain inputOps inputVars
-  let computedValues = applyParameters opChain inputParams
+  let opChain = createOperationChain inputVars inputOps
+  let computedValues = applyParameters inputParams opChain
 
   putStrLn . (++) "Initial Operations: " $ show . prettyPrintEither $ inputOps
   putStrLn $ "Initial Variables: " ++ show inputVars
   putStrLn $ "Initial Paramters: " ++ show inputParams
 
   print . prettyPrintEither . take 10 $ opChain
-  print . take 10 $ computedValues
+  print . take 10 . map (take 10) $ computedValues
+  print . dropWhile (\n -> n !! 5 == 0) . map (take 10) $ computedValues
   return ()
   where
     readCard :: FilePath -> IO T.Text
     readCard = IO.readFile
 
-    prettyPrintEither :: (Monad m, Show a, Show b) => m (Either a b) -> m String
+    prettyPrintEither :: (Functor f, Show a, Show b) => f (Either a b) -> f String
     prettyPrintEither = (either show show <$>)
 
     parseOperation :: OperationPunchCard -> UnboundOperation
@@ -221,6 +234,7 @@ main = do
       _   -> error "badly formatted punchcard"
 
     parseCardNumber :: NumberPunchCard -> String
+    parseCardNumber [] = error "empty punchcard"
     parseCardNumber cardLines =
       [ intToDigit (col + 1)
         | row <- [0..length . head $ cardLines]

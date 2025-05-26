@@ -116,7 +116,7 @@ Each number is a signed 10 digit number. The negative sign is represented by a "
 
 ```
 0 ***********
-1  **********`
+1  **********
 2  **********
 3  **********
 4  **********
