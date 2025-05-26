@@ -153,9 +153,10 @@ createOperationChain vs us = operationChain
 
 main :: IO ()
 main = do
-  arithmeticString <- readCard "programs/default/operations.pc"
-  numericFile <- readCard "programs/default/numbers.pc"
-  distributiveFile <- readCard "programs/default/loadStore.pc"
+  let programDirectory = "programs/default/"
+  arithmeticString <- readCard $ programDirectory ++ "operations.pc"
+  numericFile <- readCard $ programDirectory ++ "numbers.pc"
+  distributiveFile <- readCard $ programDirectory ++ "loadStore.pc"
 
   let operations :: [UnboundOperation]
       operations = parseOperation . lines . T.unpack <$> T.splitOn "-\r\n" arithmeticString
@@ -167,9 +168,9 @@ main = do
   let storeValues = applyParameters numbers $ createOperationChain distributive operations
 
   let inputOps = [
-        Left Add, 
-        Right UnboundSupplyZeroing, 
-        Right UnboundSupplyRetaining, 
+        Left Add,
+        Right UnboundSupplyZeroing,
+        Right UnboundSupplyRetaining,
         Right UnboundStore,
         Right UnboundStorePrimed
         ]
