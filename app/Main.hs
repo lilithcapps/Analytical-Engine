@@ -61,20 +61,22 @@ applyParameters params ops = states
           >>= put . doOperation op
           >> get
           >>= (\(_, _, s, _) -> return s)
-
+        
     doOperation :: Operation -> EngineState -> EngineState
     doOperation op s@((a, b), _, store, primed) = case (op, primed) of
-      (Right (SupplyRetaining n), True) -> doArithmetic . doDistributive (SupplyRetaining n) $ s
-      (Right (SupplyZeroing n), True) -> doArithmetic . doDistributive (SupplyRetaining n) $ s
+      (Right op@(SupplyRetaining _), True) -> doArithmetic . doDistributive op $ s
+      (Right op@(SupplyZeroing _), True) -> doArithmetic . doDistributive op $ s
       (Right r, _) -> doDistributive r s
       (Left l, _) -> ((a, b), l, store, primed)
       where
         doDistributive :: VariableOperation -> EngineState -> EngineState
         doDistributive op s@((a, b), mathOp, store, primed) = case op of
-          SupplyRetaining n -> if primed then ((store !! n, b), mathOp, store, not primed) else ((a, store !! n), mathOp, store, not primed)
-          SupplyZeroing n   -> if primed then ((store !! n, b), mathOp, store & ix n .~ 0, not primed) else ((a, store !! n), mathOp, store & ix n .~ 0, not primed)
+          SupplyRetaining n -> if primed then ((store !! n, b), mathOp, store, not primed) 
+                                         else ((a, store !! n), mathOp, store, not primed)
+          SupplyZeroing n   -> if primed then ((store !! n, b), mathOp, store & ix n .~ 0, not primed) 
+                                         else ((a, store !! n), mathOp, store & ix n .~ 0, not primed)
           Store n           -> ((0, b), mathOp, store & ix n .~ a, primed)
-          StorePrimed n     -> ((a, 0), mathOp, store & ix n .~ b, primed)
+          StorePrimed n     -> ((a, 0), mathOp, store & ix n .~ b, primed) 
           Forwards _        -> s
           Backwards _       -> s
 
@@ -172,9 +174,11 @@ main = do
         Right UnboundSupplyZeroing,
         Right UnboundSupplyRetaining,
         Right UnboundStore,
-        Right UnboundStorePrimed
+        Right UnboundSupplyZeroing,
+        Right UnboundSupplyZeroing,
+        Right UnboundStore
         ]
-  let inputVars = [0, 1, 5, 6]
+  let inputVars = [0, 1, 5, 1, 5, 6]
   let inputParams = [5, 10]
 
   let opChain = createOperationChain inputVars inputOps
@@ -184,8 +188,8 @@ main = do
   putStrLn $ "Initial Variables: " ++ show inputVars
   putStrLn $ "Initial Paramters: " ++ show inputParams
 
-  print . prettyPrintEither . take 10 $ opChain
-  print . take 10 . map (take 10) $ computedValues
+  print . prettyPrintEither . take 20 $ opChain
+  print . take 20 . map (take 10) $ computedValues
   print . dropWhile (\n -> n !! 5 == 0) . map (take 10) $ computedValues
   return ()
   where
