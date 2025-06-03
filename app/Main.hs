@@ -6,7 +6,6 @@
 import           Control.Lens             (ix, (&), (.~))
 import           Control.Monad.State.Lazy
 import           Data.Char                (intToDigit)
-import           Data.Maybe               (fromJust, isJust)
 import qualified Data.Text.Lazy           as T
 import qualified Data.Text.Lazy.IO        as IO
 import           Minecart                 (Minecart, backwardsN, dismount,
@@ -27,11 +26,12 @@ type Operation = Either MathsOperation VariableOperation
 
 type MillValue = (Integer, Integer)
 type StoreValue = [Integer]
-type Primacy = Bool
+type Primed = Bool
+type RunUpLever = Bool
 
 type MinecartM = Maybe (Minecart Operation [Operation] [Operation])
 
-type EngineState = (MinecartM, MillValue, MathsOperation, StoreValue, Primacy)
+type EngineState = (MinecartM, MillValue, MathsOperation, StoreValue, Primed, RunUpLever)
 
 data MathsOperation = Add | Subtract | Multiply | Divide
   deriving Show
@@ -41,7 +41,9 @@ data UnboundVariableOperation =
   | UnboundStore
   | UnboundStorePrimed
   | UnboundForwards
+  | UnboundForwardsCond
   | UnboundBackwards
+  | UnboundBackwardsCond
   deriving Show
 data VariableOperation =
   SupplyRetaining Int
@@ -49,7 +51,9 @@ data VariableOperation =
   | Store Int
   | StorePrimed Int
   | Forwards Int
+  | ForwardsCond Int
   | Backwards Int
+  | BackwardsCond Int
   deriving Show
 
 applyParameters :: [Integer] -> [Operation] -> [StoreValue]
@@ -59,77 +63,66 @@ applyParameters params ops = states
     mill = (0, 0) :: MillValue
 
     states :: [StoreValue]
-    states = evalState (mapM engine ops) (mount ops, mill, Add, store, False)
+    states = getStoreValue <$> evaluateState (mount ops, mill, Add, store, False, False)
       where
-        engine :: Operation -> State EngineState StoreValue
-        engine op = get
-          >>= put . doOperation op -- do the op, then put, move, get, return ??
-          >> get
-          >>= (\(mc, a, b, c, d) -> return (doMovement mc, a, b, c, d))
-          >>= (\(_, _, _, s, _) -> return s)
+        getStoreValue :: EngineState -> StoreValue
+        getStoreValue (_, _, _, s, _, _) = s
 
-        doMovement :: MinecartM -> MinecartM
-        doMovement mc = case mc >>= dismount of
-          Just (Right (Forwards n))  -> mc >>= next >>= forwardsN n
-          Just (Right (Backwards n)) -> mc >>= backwardsN (n-1)
-          Nothing                    -> Nothing
-          _                          -> mc >>= next
+        getOperation :: EngineState -> Maybe Operation
+        getOperation (mc, _, _, _, _, _) = mc >>= dismount
 
-        operationChain :: [Maybe Operation]
-        operationChain = (>>= dismount) <$> go
+        evaluateState :: EngineState -> [EngineState]
+        evaluateState s =
+          let state =
+                (doMovement . doOperation (getOperation s) $ s) : go state
+          in state
           where
-            go :: [MinecartM]
-            go = mount ops : more go
+            go :: [EngineState] -> [EngineState]
+            go ((Nothing, _, _, _, _, _):_) = []
+            go (s:_) =
+              let newState =
+                    (doMovement . doOperation (getOperation s) $ s) : go newState
+              in newState
+            go [] = []
+
+            doMovement :: EngineState -> EngineState
+            doMovement (mc, mill, op, store, primed, lever) =
+              let newMc = (case mc >>= dismount of
+                    Just (Right (Forwards n))  -> mc >>= next >>= forwardsN n
+                    Just (Right (Backwards n)) -> mc >>= backwardsN (n-1)
+                    Just (Right (ForwardsCond n)) -> mc >>= if lever then next else next >=> forwardsN n
+                    Just (Right (BackwardsCond n)) -> mc >>= if lever then next else backwardsN (n-1)
+                    Nothing                    -> Nothing
+                    _                          -> mc >>= next)
+              in (newMc, mill, op, store, primed, lever)
+
+            doOperation :: Maybe Operation -> EngineState -> EngineState
+            doOperation Nothing s = s
+            doOperation (Just op) s@(mc, (a, b), _, store, primed, lever) =
+              case (op, primed) of
+              (Right op@(SupplyRetaining _), True) -> doArithmetic . doDistributive op $ s
+              (Right op@(SupplyZeroing _), True) -> doArithmetic . doDistributive op $ s
+              (Right r, _) -> doDistributive r s
+              (Left l, _) -> (mc, (a, b), l, store, primed, lever)
               where
-                more :: [MinecartM] -> [MinecartM]
-                more (Nothing:_) = []
-                more (mc:_) =
-                  let newMc = (case mc >>= dismount of
-                        Just (Right (Forwards n))  -> mc >>= next >>= forwardsN n
-                        Just (Right (Backwards n)) -> mc >>= backwardsN (n-1)
-                        Nothing                    -> Nothing
-                        _                          -> mc >>= next
-                        ) : more newMc
-                  in newMc
-                more _ = []
+                doDistributive :: VariableOperation -> EngineState -> EngineState
+                doDistributive op s@(mc, (a, b), mathOp, store, primed, lever) = case op of
+                  SupplyRetaining n -> if primed then (mc, (store !! n, b), mathOp, store, not primed, lever)
+                                                else (mc, (a, store !! n), mathOp, store, not primed, lever)
+                  SupplyZeroing n   -> if primed then (mc, (store !! n, b), mathOp, store & ix n .~ 0, not primed, lever)
+                                                else (mc, (a, store !! n), mathOp, store & ix n .~ 0, not primed, lever)
+                  Store n           -> (mc, (0, b), mathOp, store & ix n .~ a, primed, lever)
+                  StorePrimed n     -> (mc, (a, 0), mathOp, store & ix n .~ b, primed, lever)
+                  _                 -> s
 
-    doOperation :: Operation -> EngineState -> EngineState
-    doOperation op s@(mc, (a, b), _, store, primed) = case (op, primed) of
-      (Right op@(SupplyRetaining _), True) -> doArithmetic . doDistributive op $ s
-      (Right op@(SupplyZeroing _), True) -> doArithmetic . doDistributive op $ s
-      (Right r, _) -> doDistributive r s
-      (Left l, _) -> (mc, (a, b), l, store, primed)
-      where
-        doDistributive :: VariableOperation -> EngineState -> EngineState
-        doDistributive op s@(mc, (a, b), mathOp, store, primed) = case op of
-          SupplyRetaining n -> if primed then (mc, (store !! n, b), mathOp, store, not primed)
-                                         else (mc, (a, store !! n), mathOp, store, not primed)
-          SupplyZeroing n   -> if primed then (mc, (store !! n, b), mathOp, store & ix n .~ 0, not primed)
-                                         else (mc, (a, store !! n), mathOp, store & ix n .~ 0, not primed)
-          Store n           -> (mc, (0, b), mathOp, store & ix n .~ a, primed)
-          StorePrimed n     -> (mc, (a, 0), mathOp, store & ix n .~ b, primed)
-          _        -> s
-
-        doArithmetic :: EngineState -> EngineState
-        doArithmetic (mc, (a, b), op, store, primed) =
-          let mill = case op of
-                Add      -> (a + b, 0)
-                Subtract -> (a - b, 0)
-                Multiply -> (a * b, 0)
-                Divide   -> (a `div` b, a `mod` b)
-          in (mc, mill, op, store, primed)
-
-    -- arithmeticOps :: [MathsOperation]
-    -- arithmeticOps = [(case op of
-    --   Left l  -> l
-    --   Right _ -> last arithmeticOps)
-    --   | op <- ops]
-
-    -- distributiveOps :: [Either Int VariableOperation]
-    -- distributiveOps = [ (case op of
-    --     Left _  -> Left 0
-    --     Right r -> Right r)
-    --     | op <- ops]
+                doArithmetic :: EngineState -> EngineState
+                doArithmetic (mc, (a, b), op, store, primed, lev) =
+                  let (mill, lever) = case op of
+                        Add      -> ((a + b, 0), lev)
+                        Subtract -> ((a - b, 0), (fst mill < 0) || lev)
+                        Multiply -> ((a * b, 0), lever)
+                        Divide   -> ((a `div` b, a `mod` b), lev)
+                  in (mc, mill, op, store, primed, lev)
 
 bindOperations :: [Int] -> [UnboundOperation] -> [Operation]
 bindOperations vs us = operations
@@ -157,6 +150,8 @@ bindOperations vs us = operations
       bindVariableOperation (n, UnboundStorePrimed)     = StorePrimed n
       bindVariableOperation (n, UnboundForwards)        = Forwards n
       bindVariableOperation (n, UnboundBackwards)       = Backwards n
+      bindVariableOperation (n, UnboundForwardsCond)    = ForwardsCond n
+      bindVariableOperation (n, UnboundBackwardsCond)   = BackwardsCond n
 
 
 main :: IO ()
@@ -207,28 +202,32 @@ main = do
 
     parseOperation :: OperationPunchCard -> UnboundOperation
     parseOperation card =
-      if | card == addCard           -> Left Add
-          | card == subtractCard     -> Left Subtract
-          | card == multiplyCard     -> Left Multiply
-          | card == divideCard       -> Left Divide
-          | card == loadPreserveCard -> Right UnboundSupplyRetaining
-          | card == loadZeroCard     -> Right UnboundSupplyZeroing
-          | card == storeCard        -> Right UnboundStore
-          | card == storePrimedCard  -> Right UnboundStorePrimed
-          | card == forwardsCard     -> Right UnboundForwards
-          | card == backwardsCard    -> Right UnboundBackwards
-          | True                     -> error "unknown operation card"
+      if | card == addCard            -> Left Add
+          | card == subtractCard      -> Left Subtract
+          | card == multiplyCard      -> Left Multiply
+          | card == divideCard        -> Left Divide
+          | card == loadPreserveCard  -> Right UnboundSupplyRetaining
+          | card == loadZeroCard      -> Right UnboundSupplyZeroing
+          | card == storeCard         -> Right UnboundStore
+          | card == storePrimedCard   -> Right UnboundStorePrimed
+          | card == forwardsCard      -> Right UnboundForwards
+          | card == backwardsCard     -> Right UnboundBackwards
+          | card == forwardsCondCard  -> Right UnboundForwards
+          | card == backwardsCondCard -> Right UnboundBackwards
+          | True                      -> error $ "unknown operation card: " ++ show card
       where
-        addCard          = ["* ", "  ", "  ", "  ", "  "]
-        subtractCard     = [" *", "  ", "  ", "  ", "  "]
-        multiplyCard     = ["  ", "* ", "  ", "  ", "  "]
-        divideCard       = ["  ", " *", "  ", "  ", "  "]
-        loadPreserveCard = ["  ", "  ", "* ", "  ", "  "]
-        loadZeroCard     = ["  ", "  ", " *", "  ", "  "]
-        storeCard        = ["  ", "  ", "  ", "* ", "  "]
-        storePrimedCard  = ["  ", "  ", "  ", " *", "  "]
-        forwardsCard     = ["* ", "  ", "  ", "  ", "* "]
-        backwardsCard    = [" *", "  ", "  ", "  ", "* "]
+        addCard            = ["* ", "  ", "  ", "  ", "  "]
+        subtractCard       = [" *", "  ", "  ", "  ", "  "]
+        multiplyCard       = ["  ", "* ", "  ", "  ", "  "]
+        divideCard         = ["  ", " *", "  ", "  ", "  "]
+        loadPreserveCard   = ["  ", "  ", "* ", "  ", "  "]
+        loadZeroCard       = ["  ", "  ", " *", "  ", "  "]
+        storeCard          = ["  ", "  ", "  ", "* ", "  "]
+        storePrimedCard    = ["  ", "  ", "  ", " *", "  "]
+        forwardsCard       = ["* ", "  ", "  ", "  ", "* "]
+        backwardsCard      = [" *", "  ", "  ", "  ", "* "]
+        forwardsCondCard   = ["* ", "  ", "  ", "  ", " *"]
+        backwardsCondCard  = [" *", "  ", "  ", "  ", " *"]
 
     parseVariable :: DistributivePunchCard -> Int
     parseVariable = read . parseCardNumber
@@ -242,7 +241,7 @@ main = do
     parseSign card = case head . head $ card of
       '*' -> '-'
       ' ' -> '+'
-      _   -> error "badly formatted punchcard"
+      _   -> error $ "badly formatted punchcard: " ++ show card
 
     parseCardNumber :: NumberPunchCard -> String
     parseCardNumber [] = error "empty punchcard"

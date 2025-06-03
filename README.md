@@ -8,7 +8,7 @@ A program is a folder that contains a `numbers.pc`, a `loadstore.pc`, and an `op
 
 ### Operations
 
-A operation may be one of the operations defined below. Each operation has two columns, and five rows. Empty space should be filled with the appropriate number of spaces. 
+A operation may be one of the operations defined below. Each operation has two columns, and five rows. Empty space should be filled with the appropriate number of spaces.
 
 #### Add
 
@@ -34,7 +34,7 @@ A operation may be one of the operations defined below. Each operation has two c
 
 ```
 
- *
+*
 
 
 
@@ -44,7 +44,7 @@ A operation may be one of the operations defined below. Each operation has two c
 
 ```
 
-  *
+ *
 
 
 
@@ -55,7 +55,7 @@ A operation may be one of the operations defined below. Each operation has two c
 ```
 
 
- *
+*
 
 
 ```
@@ -65,7 +65,7 @@ A operation may be one of the operations defined below. Each operation has two c
 ```
 
 
-  *
+ *
 
 
 ```
@@ -76,7 +76,7 @@ A operation may be one of the operations defined below. Each operation has two c
 
 
 
- *
+*
 
 ```
 
@@ -86,8 +86,28 @@ A operation may be one of the operations defined below. Each operation has two c
 
 
 
-  *
+ *
 
+```
+
+#### Move Forwards
+
+```
+*
+
+
+
+*
+```
+
+#### Move Backwards
+
+```
+ *
+
+
+
+*
 ```
 
 #### Move Forwards
@@ -129,7 +149,7 @@ Each number is a signed 10 digit number. The negative sign is represented by a "
 
 ### Load & Store Variables
 
-Each variable is an unsigned 3 digit number representing a location in the Store memory. The format for these variables is similar to the Number card [above](#numbers). 
+Each variable is an unsigned 3 digit number representing a location in the Store memory. The format for these variables is similar to the Number card [above](#numbers).
 
 ```
 0 ***
