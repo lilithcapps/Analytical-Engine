@@ -6,8 +6,11 @@
 import           Control.Lens             (ix, (&), (.~))
 import           Control.Monad.State.Lazy
 import           Data.Char                (intToDigit)
+import           Data.Maybe               (fromJust, isJust)
 import qualified Data.Text.Lazy           as T
 import qualified Data.Text.Lazy.IO        as IO
+import           Minecart                 (Minecart, backwardsN, dismount,
+                                           forwardsN, mount, next)
 
 type DistributivePunchCard = NumberPunchCard
 type NumericPunchCard = NumberPunchCard
@@ -26,7 +29,9 @@ type MillValue = (Integer, Integer)
 type StoreValue = [Integer]
 type Primacy = Bool
 
-type EngineState = (MillValue, MathsOperation, StoreValue, Primacy)
+type MinecartM = Maybe (Minecart Operation [Operation] [Operation])
+
+type EngineState = (MinecartM, MillValue, MathsOperation, StoreValue, Primacy)
 
 data MathsOperation = Add | Subtract | Multiply | Divide
   deriving Show
@@ -54,55 +59,80 @@ applyParameters params ops = states
     mill = (0, 0) :: MillValue
 
     states :: [StoreValue]
-    states = evalState (mapM engine ops) (mill, Add, store, False)
+    states = evalState (mapM engine ops) (mount ops, mill, Add, store, False)
       where
         engine :: Operation -> State EngineState StoreValue
         engine op = get
-          >>= put . doOperation op
+          >>= put . doOperation op -- do the op, then put, move, get, return ??
           >> get
-          >>= (\(_, _, s, _) -> return s)
-        
+          >>= (\(mc, a, b, c, d) -> return (doMovement mc, a, b, c, d))
+          >>= (\(_, _, _, s, _) -> return s)
+
+        doMovement :: MinecartM -> MinecartM
+        doMovement mc = case mc >>= dismount of
+          Just (Right (Forwards n))  -> mc >>= next >>= forwardsN n
+          Just (Right (Backwards n)) -> mc >>= backwardsN (n-1)
+          Nothing                    -> Nothing
+          _                          -> mc >>= next
+
+        operationChain :: [Maybe Operation]
+        operationChain = (>>= dismount) <$> go
+          where
+            go :: [MinecartM]
+            go = mount ops : more go
+              where
+                more :: [MinecartM] -> [MinecartM]
+                more (Nothing:_) = []
+                more (mc:_) =
+                  let newMc = (case mc >>= dismount of
+                        Just (Right (Forwards n))  -> mc >>= next >>= forwardsN n
+                        Just (Right (Backwards n)) -> mc >>= backwardsN (n-1)
+                        Nothing                    -> Nothing
+                        _                          -> mc >>= next
+                        ) : more newMc
+                  in newMc
+                more _ = []
+
     doOperation :: Operation -> EngineState -> EngineState
-    doOperation op s@((a, b), _, store, primed) = case (op, primed) of
+    doOperation op s@(mc, (a, b), _, store, primed) = case (op, primed) of
       (Right op@(SupplyRetaining _), True) -> doArithmetic . doDistributive op $ s
       (Right op@(SupplyZeroing _), True) -> doArithmetic . doDistributive op $ s
       (Right r, _) -> doDistributive r s
-      (Left l, _) -> ((a, b), l, store, primed)
+      (Left l, _) -> (mc, (a, b), l, store, primed)
       where
         doDistributive :: VariableOperation -> EngineState -> EngineState
-        doDistributive op s@((a, b), mathOp, store, primed) = case op of
-          SupplyRetaining n -> if primed then ((store !! n, b), mathOp, store, not primed) 
-                                         else ((a, store !! n), mathOp, store, not primed)
-          SupplyZeroing n   -> if primed then ((store !! n, b), mathOp, store & ix n .~ 0, not primed) 
-                                         else ((a, store !! n), mathOp, store & ix n .~ 0, not primed)
-          Store n           -> ((0, b), mathOp, store & ix n .~ a, primed)
-          StorePrimed n     -> ((a, 0), mathOp, store & ix n .~ b, primed) 
-          Forwards _        -> s
-          Backwards _       -> s
+        doDistributive op s@(mc, (a, b), mathOp, store, primed) = case op of
+          SupplyRetaining n -> if primed then (mc, (store !! n, b), mathOp, store, not primed)
+                                         else (mc, (a, store !! n), mathOp, store, not primed)
+          SupplyZeroing n   -> if primed then (mc, (store !! n, b), mathOp, store & ix n .~ 0, not primed)
+                                         else (mc, (a, store !! n), mathOp, store & ix n .~ 0, not primed)
+          Store n           -> (mc, (0, b), mathOp, store & ix n .~ a, primed)
+          StorePrimed n     -> (mc, (a, 0), mathOp, store & ix n .~ b, primed)
+          _        -> s
 
         doArithmetic :: EngineState -> EngineState
-        doArithmetic ((a, b), op, store, primed) =
+        doArithmetic (mc, (a, b), op, store, primed) =
           let mill = case op of
                 Add      -> (a + b, 0)
                 Subtract -> (a - b, 0)
                 Multiply -> (a * b, 0)
                 Divide   -> (a `div` b, a `mod` b)
-          in (mill, op, store, primed)
+          in (mc, mill, op, store, primed)
 
-    arithmeticOps :: [MathsOperation]
-    arithmeticOps = [(case op of
-      Left l  -> l
-      Right _ -> last arithmeticOps)
-      | op <- ops]
+    -- arithmeticOps :: [MathsOperation]
+    -- arithmeticOps = [(case op of
+    --   Left l  -> l
+    --   Right _ -> last arithmeticOps)
+    --   | op <- ops]
 
-    distributiveOps :: [Either Int VariableOperation]
-    distributiveOps = [ (case op of
-        Left _  -> Left 0
-        Right r -> Right r)
-        | op <- ops]
+    -- distributiveOps :: [Either Int VariableOperation]
+    -- distributiveOps = [ (case op of
+    --     Left _  -> Left 0
+    --     Right r -> Right r)
+    --     | op <- ops]
 
-createOperationChain :: [Int] -> [UnboundOperation] -> [Operation]
-createOperationChain vs us = operationChain
+bindOperations :: [Int] -> [UnboundOperation] -> [Operation]
+bindOperations vs us = operations
   where
   -- this is lefties alone and righties as data with variable
   operations :: [Operation]
@@ -128,30 +158,6 @@ createOperationChain vs us = operationChain
       bindVariableOperation (n, UnboundForwards)        = Forwards n
       bindVariableOperation (n, UnboundBackwards)       = Backwards n
 
-  -- create infinite list of operations
-  operationChain = (\(x, _, _) -> x) <$> go
-    where
-      go :: [(Operation, [Operation], [Operation])]
-      go = (head operations, [], tail operations) : more go
-        where
-          more :: [(Operation, [Operation], [Operation])] -> [(Operation, [Operation], [Operation])]
-          more ((c@(Right (Forwards n)), ps, ns):_) =
-            let nextTup = (
-                  (!! max 0 n) ns,
-                  reverse (take n ns) ++ (c : ps),
-                  tail . drop n $ ns) : more nextTup
-            in nextTup
-          more ((c@(Right (Backwards n)), ps, ns):_) =
-            let newPrevs = c : ps in
-            let nextTup = (
-                  (!! max 0 (n-1)) newPrevs,
-                  drop n newPrevs,
-                  reverse (take (n-1) newPrevs) ++ ns) : more nextTup
-            in nextTup
-          more ((c, ps, n:ns):_) =
-            let nextTup = (n, c:ps, ns) : more nextTup
-            in nextTup
-          more _ = []
 
 main :: IO ()
 main = do
@@ -167,7 +173,7 @@ main = do
   let numbers :: [Integer]
       numbers = parseNumeric . lines . T.unpack <$> T.splitOn "-\r\n" numericFile
 
-  let storeValues = applyParameters numbers $ createOperationChain distributive operations
+  let storeValues = applyParameters numbers $ bindOperations distributive operations
 
   let inputOps = [
         Left Add,
@@ -181,7 +187,7 @@ main = do
   let inputVars = [0, 1, 5, 1, 5, 6]
   let inputParams = [5, 10]
 
-  let opChain = createOperationChain inputVars inputOps
+  let opChain = bindOperations inputVars inputOps
   let computedValues = applyParameters inputParams opChain
 
   putStrLn . (++) "Initial Operations: " $ show . prettyPrintEither $ inputOps

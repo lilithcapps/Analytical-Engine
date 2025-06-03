@@ -2,8 +2,8 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs                  #-}
 {-# LANGUAGE StandaloneDeriving     #-}
-module Minecart where
-import Data.Maybe (fromMaybe)
+module Minecart  where
+import           Data.Maybe (fromMaybe)
 
 data Minecart c ps ns where
   Minecart ::  a -> [a] -> [a] -> Minecart a [a] [a]
