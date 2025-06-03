@@ -1,6 +1,0 @@
-resolver: lts-21.25
-packages:
-- .
-extra-deps:
-- text-2.1.2
-- lens-5.3.4
