@@ -19,6 +19,8 @@ The program simulates the operations of the Analytical Engine by:
     *   **Operations:** The program defines data types for different kinds of operations:
         *   `MathsOperation`: Basic arithmetic (Add, Subtract, Multiply, Divide).
         *   `VariableOperation`: Operations that interact with the Store (Supply/Load, Store) or control program flow (Forwards, Backwards).
+        *   `ConditionalForwards Int`, `ConditionalBackwards Int`: Moves the operation sequence forwards or backwards by `Int` steps, but only if a conceptual "run-up lever" (represented by a boolean flag in the engine's state) is active.
+        *   `SetRunUpLever Int`, `ClearRunUpLever Int`: Operations to set or clear the "run-up lever" state. They consume a dummy `Int` variable.
     *   **Minecart (`app/Minecart.hs`):** This module implements a concept analogous to the mechanism that would feed operation cards into the engine. It's a data structure (like a zipper or focused list) that holds the sequence of operations and allows stepping through them (`next`, `prev`).
     *   **Engine Simulation (`app/Main.hs`):**
         *   The `applyParameters` function is central to the simulation. It takes the initial numbers (from `numbers.pc`) and a sequence of operations (derived from `operations.pc` and `loadStore.pc`).
