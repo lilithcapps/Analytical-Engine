@@ -24,7 +24,9 @@ type UnboundOperation = Either MathsOperation UnboundVariableOperation
 type PairedOperation = Either MathsOperation (Int, UnboundVariableOperation)
 type Operation = Either MathsOperation VariableOperation
 
-type MillValue = (Integer, Integer)
+type IngressAxis = ((Integer, Integer), Integer)
+type EgressAxis = (Integer, Integer)
+type MillValue = (IngressAxis, EgressAxis)
 type StoreValue = [Integer]
 type Primed = Bool
 type RunUpLever = Bool
@@ -60,7 +62,7 @@ applyParameters :: [Integer] -> [Operation] -> [StoreValue]
 applyParameters params ops = states
   where
     store = params ++ [0,0..] :: StoreValue
-    mill = (0, 0) :: MillValue
+    mill = (((0, 0), 0), (0, 0)) :: MillValue
 
     states :: [StoreValue]
     states = getStoreValue <$> evaluateState (mount ops, mill, Add, store, False, False)
@@ -106,22 +108,22 @@ applyParameters params ops = states
               (Left l, _) -> (mc, (a, b), l, store, primed, lever)
               where
                 doDistributive :: VariableOperation -> EngineState -> EngineState
-                doDistributive op s@(mc, (a, b), mathOp, store, primed, lever) = case op of
-                  SupplyRetaining n -> if primed then (mc, (store !! n, b), mathOp, store, not primed, lever)
-                                                else (mc, (a, store !! n), mathOp, store, not primed, lever)
-                  SupplyZeroing n   -> if primed then (mc, (store !! n, b), mathOp, store & ix n .~ 0, not primed, lever)
-                                                else (mc, (a, store !! n), mathOp, store & ix n .~ 0, not primed, lever)
-                  Store n           -> (mc, (0, b), mathOp, store & ix n .~ a, primed, lever)
-                  StorePrimed n     -> (mc, (a, 0), mathOp, store & ix n .~ b, primed, lever)
+                doDistributive op s@(mc, ((ing@(a, a'), b), ext@(ex, ex')), mathOp, store, first, lever) = case op of
+                  SupplyRetaining n -> if first then (mc, (((store !! n, a'), b), ext), mathOp, store, not first, lever)
+                                                else (mc, ((ing, store !! n), ext), mathOp, store, not first, lever)
+                  SupplyZeroing n   -> if first then (mc, (((store !! n, a'), b), ext), mathOp, store & ix n .~ 0, not first, lever)
+                                                else (mc, ((ing, store !! n), ext), mathOp, store & ix n .~ 0, not first, lever)
+                  Store n           -> (mc, ((ing, b), (0, ex)), mathOp, store & ix n .~ ex, first, lever)
+                  StorePrimed n     -> (mc, ((ing, b), (ex, 0)), mathOp, store & ix n .~ ex', first, lever)
                   _                 -> s
 
                 doArithmetic :: EngineState -> EngineState
-                doArithmetic (mc, (a, b), op, store, primed, lev) =
+                doArithmetic (mc, (ing@((a, a'), b), (_, ex')), op, store, primed, lev) =
                   let (mill, lever) = case op of
-                        Add      -> ((a + b, 0), lev)
-                        Subtract -> ((a - b, 0), (fst mill < 0) || lev)
-                        Multiply -> ((a * b, 0), lever)
-                        Divide   -> ((a `div` b, a `mod` b), lev)
+                        Add      -> ((ing, (a + b, ex')), lev)
+                        Subtract -> ((ing, (a - b, ex')), ((fst . snd) mill < 0) || lev)
+                        Multiply -> ((ing, (a * b, ex')), lever)
+                        Divide   -> ((ing, (a `div` b, a `mod` b)), lev)
                   in (mc, mill, op, store, primed, lev)
 
 bindOperations :: [Int] -> [UnboundOperation] -> [Operation]
