@@ -24,16 +24,22 @@ type UnboundOperation = Either MathsOperation UnboundVariableOperation
 type PairedOperation = Either MathsOperation (Int, UnboundVariableOperation)
 type Operation = Either MathsOperation VariableOperation
 
+type MinecartM = Maybe (Minecart Operation [Operation] [Operation])
 type IngressAxis = ((Integer, Integer), Integer)
 type EgressAxis = (Integer, Integer)
-type MillValue = (IngressAxis, EgressAxis)
 type StoreValue = [Integer]
-type Primed = Bool
+type TakingFirst = Bool
 type RunUpLever = Bool
 
-type MinecartM = Maybe (Minecart Operation [Operation] [Operation])
-
-type EngineState = (MinecartM, MillValue, MathsOperation, StoreValue, Primed, RunUpLever)
+data EngineState = MkState {
+  minecart  :: MinecartM,
+  ingress   :: IngressAxis,
+  egress    :: EgressAxis,
+  operation :: MathsOperation,
+  store     :: StoreValue,
+  first     :: TakingFirst,
+  lever     :: RunUpLever
+}
 
 data MathsOperation = Add | Subtract | Multiply | Divide
   deriving Show
@@ -61,70 +67,70 @@ data VariableOperation =
 applyParameters :: [Integer] -> [Operation] -> [StoreValue]
 applyParameters params ops = states
   where
-    store = params ++ [0,0..] :: StoreValue
-    mill = (((0, 0), 0), (0, 0)) :: MillValue
+    str = params ++ [0,0..] :: StoreValue
+    iAxis = ((0, 0), 0) :: IngressAxis
+    eAxis = (0, 0) :: EgressAxis
 
     states :: [StoreValue]
-    states = getStoreValue <$> evaluateState (mount ops, mill, Add, store, False, False)
+    states = store <$> evaluateState (MkState (mount ops) iAxis eAxis Add str False False)
       where
-        getStoreValue :: EngineState -> StoreValue
-        getStoreValue (_, _, _, s, _, _) = s
-
         getOperation :: EngineState -> Maybe Operation
-        getOperation (mc, _, _, _, _, _) = mc >>= dismount
+        getOperation = dismount <=< minecart
 
         evaluateState :: EngineState -> [EngineState]
         evaluateState s =
           let state =
-                (doMovement . doOperation (getOperation s) $ s) : go state
+                (doMovement . doOperation $ s) : go state
           in state
           where
             go :: [EngineState] -> [EngineState]
-            go ((Nothing, _, _, _, _, _):_) = []
+            go ((MkState {minecart = Nothing}):_) = []
             go (s:_) =
               let newState =
-                    (doMovement . doOperation (getOperation s) $ s) : go newState
+                    (doMovement . doOperation $ s) : go newState
               in newState
             go [] = []
 
             doMovement :: EngineState -> EngineState
-            doMovement (mc, mill, op, store, primed, lever) =
-              let newMc = (case mc >>= dismount of
+            doMovement s =
+              let mc = minecart s in
+              let newMc = (case minecart s >>= dismount of
                     Just (Right (Forwards n))  -> mc >>= next >>= forwardsN n
                     Just (Right (Backwards n)) -> mc >>= backwardsN (n-1)
-                    Just (Right (ForwardsCond n)) -> mc >>= if lever then next else next >=> forwardsN n
-                    Just (Right (BackwardsCond n)) -> mc >>= if lever then next else backwardsN (n-1)
+                    Just (Right (ForwardsCond n)) -> mc >>= if lever s then next else next >=> forwardsN n
+                    Just (Right (BackwardsCond n)) -> mc >>= if lever s then next else backwardsN (n-1)
                     Nothing                    -> Nothing
                     _                          -> mc >>= next)
-              in (newMc, mill, op, store, primed, lever)
+              in s { minecart = newMc }
 
-            doOperation :: Maybe Operation -> EngineState -> EngineState
-            doOperation Nothing s = s
-            doOperation (Just op) s@(mc, (a, b), _, store, primed, lever) =
-              case (op, primed) of
-              (Right op@(SupplyRetaining _), True) -> doArithmetic . doDistributive op $ s
-              (Right op@(SupplyZeroing _), True) -> doArithmetic . doDistributive op $ s
-              (Right r, _) -> doDistributive r s
-              (Left l, _) -> (mc, (a, b), l, store, primed, lever)
+            doOperation :: EngineState -> EngineState
+            doOperation s =
+              case getOperation s of
+                Nothing -> s
+                Just op -> case (op, first s) of
+                  (Right op@(SupplyRetaining _), True) -> doArithmetic . doDistributive op $ s
+                  (Right op@(SupplyZeroing _), True) -> doArithmetic . doDistributive op $ s
+                  (Right r, _) -> doDistributive r s
+                  (Left l, _) -> s { operation = l }
               where
                 doDistributive :: VariableOperation -> EngineState -> EngineState
-                doDistributive op s@(mc, ((ing@(a, a'), b), ext@(ex, ex')), mathOp, store, first, lever) = case op of
-                  SupplyRetaining n -> if first then (mc, (((store !! n, a'), b), ext), mathOp, store, not first, lever)
-                                                else (mc, ((ing, store !! n), ext), mathOp, store, not first, lever)
-                  SupplyZeroing n   -> if first then (mc, (((store !! n, a'), b), ext), mathOp, store & ix n .~ 0, not first, lever)
-                                                else (mc, ((ing, store !! n), ext), mathOp, store & ix n .~ 0, not first, lever)
-                  Store n           -> (mc, ((ing, b), (0, ex)), mathOp, store & ix n .~ ex, first, lever)
-                  StorePrimed n     -> (mc, ((ing, b), (ex, 0)), mathOp, store & ix n .~ ex', first, lever)
+                doDistributive op s@(MkState { ingress = (ing@(_, a'), b), egress = (ex, ex'), store = str, first = fst }) = case op of
+                  SupplyRetaining n -> if first s then s { first = not fst, ingress = ((str !! n, a'), b) }
+                                                   else s { first = not fst, ingress = (ing, str !! n) }
+                  SupplyZeroing n   -> if first s then s { first = not fst, ingress = ((str !! n, a'), b), store = str & ix n .~ 0 }
+                                                   else s { first = not fst, ingress = (ing, str !! n), store = str & ix n .~ 0 }
+                  Store n           -> s { store = str & ix n .~ ex}
+                  StorePrimed n     -> s { store = str & ix n .~ ex'}
                   _                 -> s
 
                 doArithmetic :: EngineState -> EngineState
-                doArithmetic (mc, (ing@((a, a'), b), (_, ex')), op, store, primed, lev) =
-                  let (mill, lever) = case op of
-                        Add      -> ((ing, (a + b, ex')), lev)
-                        Subtract -> ((ing, (a - b, ex')), ((fst . snd) mill < 0) || lev)
-                        Multiply -> ((ing, (a * b, ex')), lever)
-                        Divide   -> ((ing, (a `div` b, a `mod` b)), lev)
-                  in (mc, mill, op, store, primed, lev)
+                doArithmetic s@(MkState { ingress = ((a, a'), b), egress = (_, ex')}) =
+                  let (eAxis, lev) = case operation s of
+                        Add      -> ((a + b, ex'), lever s)
+                        Subtract -> ((a - b, ex'), (fst eAxis < 0) || lever s)
+                        Multiply -> ((a * b, ex'), lever s)
+                        Divide   -> ((a `div` b, a `mod` b), lever s)
+                  in s { egress = eAxis, lever = lev }
 
 bindOperations :: [Int] -> [UnboundOperation] -> [Operation]
 bindOperations vs us = operations
