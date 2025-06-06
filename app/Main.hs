@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 {-# OPTIONS_GHC -Wno-unused-local-binds #-}
+{-# LANGUAGE InstanceSigs      #-}
 
 import           Control.Lens             (ix, (&), (.~))
 import           Control.Monad.State.Lazy
@@ -10,6 +11,7 @@ import qualified Data.Text.Lazy           as T
 import qualified Data.Text.Lazy.IO        as IO
 import           Minecart                 (Minecart, backwardsN, dismount,
                                            forwardsN, mount, next)
+import           Prelude                  hiding (Left, Right)
 
 type DistributivePunchCard = NumberPunchCard
 type NumericPunchCard = NumberPunchCard
@@ -20,9 +22,32 @@ type OperationPunchCard = PunchCard
 type PunchCard = [PunchCardLine]
 type PunchCardLine = String
 
-type UnboundOperation = Either MathsOperation UnboundVariableOperation
-type PairedOperation = Either MathsOperation (Int, UnboundVariableOperation)
-type Operation = Either MathsOperation VariableOperation
+data Either3 a b c = Left a | Middle b | Right c
+either3 :: (a -> d) -> (b -> d) -> (c -> d) -> Either3 a b c -> d
+either3 f1 f2 f3 e = case e of
+  Left e   -> f1 e
+  Middle e -> f2 e
+  Right e  -> f3 e
+
+instance Functor (Either3 a b) where
+  fmap :: (c -> d) -> Either3 a b c -> Either3 a b d
+  fmap f e = case e of
+    Left l   -> Left l
+    Middle m -> Middle m
+    Right r  -> Right (f r)
+
+either3ToOperation :: Either3 MathsOperation OutputOperation VariableOperation -> Operation
+either3ToOperation e = case e of
+  Left e   -> Math e
+  Middle e -> Output e
+  Right e  -> Variable e
+
+
+type UnboundOperation = Either3 MathsOperation OutputOperation UnboundVariableOperation
+type PairedOperation = Either3 MathsOperation OutputOperation (Int, UnboundVariableOperation)
+
+data Operation = Math MathsOperation | Output OutputOperation | Variable VariableOperation
+  deriving Show
 
 type MinecartM = Maybe (Minecart Operation [Operation] [Operation])
 type IngressAxis = ((Integer, Integer), Integer)
@@ -38,11 +63,17 @@ data EngineState = MkState {
   operation :: MathsOperation,
   store     :: StoreValue,
   first     :: TakingFirst,
-  lever     :: RunUpLever
+  lever     :: RunUpLever,
+  output    :: OutputValue
 }
 
 data MathsOperation = Add | Subtract | Multiply | Divide
   deriving Show
+data OutputOperation = Print | Bell
+  deriving Show
+data OutputValue = PrintV EgressAxis | RingBell | None
+  deriving (Show, Eq)
+
 data UnboundVariableOperation =
   UnboundSupplyRetaining
   | UnboundSupplyZeroing
@@ -64,30 +95,28 @@ data VariableOperation =
   | BackwardsCond Int
   deriving Show
 
-applyParameters :: [Integer] -> [Operation] -> [StoreValue]
-applyParameters params ops = states
+applyParameters :: [Integer] -> [Operation] -> [OutputValue]
+applyParameters params ops = filter (/= None) states
   where
     str = params ++ [0,0..] :: StoreValue
     iAxis = ((0, 0), 0) :: IngressAxis
     eAxis = (0, 0) :: EgressAxis
 
-    states :: [StoreValue]
-    states = store <$> evaluateState (MkState (mount ops) iAxis eAxis Add str False False)
+    states :: [OutputValue]
+    states = output <$> evaluateState (MkState (mount ops) iAxis eAxis Add str False False None)
       where
         getOperation :: EngineState -> Maybe Operation
         getOperation = dismount <=< minecart
 
         evaluateState :: EngineState -> [EngineState]
         evaluateState s =
-          let state =
-                (doMovement . doOperation $ s) : go state
+          let state = (doMovement . doOperation $ s) : go state
           in state
           where
             go :: [EngineState] -> [EngineState]
             go ((MkState {minecart = Nothing}):_) = []
             go (s:_) =
-              let newState =
-                    (doMovement . doOperation $ s) : go newState
+              let newState = (doMovement . doOperation $ s { output = None }) : go newState
               in newState
             go [] = []
 
@@ -95,10 +124,10 @@ applyParameters params ops = states
             doMovement s =
               let mc = minecart s in
               let newMc = (case minecart s >>= dismount of
-                    Just (Right (Forwards n))  -> mc >>= next >>= forwardsN n
-                    Just (Right (Backwards n)) -> mc >>= backwardsN (n-1)
-                    Just (Right (ForwardsCond n)) -> mc >>= if lever s then next else next >=> forwardsN n
-                    Just (Right (BackwardsCond n)) -> mc >>= if lever s then next else backwardsN (n-1)
+                    Just (Variable (Forwards n))  -> mc >>= next >>= forwardsN n
+                    Just (Variable (Backwards n)) -> mc >>= backwardsN (n-1)
+                    Just (Variable (ForwardsCond n)) -> mc >>= if lever s then next else next >=> forwardsN n
+                    Just (Variable (BackwardsCond n)) -> mc >>= if lever s then next else backwardsN (n-1)
                     Nothing                    -> Nothing
                     _                          -> mc >>= next)
               in s { minecart = newMc }
@@ -108,10 +137,12 @@ applyParameters params ops = states
               case getOperation s of
                 Nothing -> s
                 Just op -> case (op, first s) of
-                  (Right op@(SupplyRetaining _), True) -> doArithmetic . doDistributive op $ s
-                  (Right op@(SupplyZeroing _), True) -> doArithmetic . doDistributive op $ s
-                  (Right r, _) -> doDistributive r s
-                  (Left l, _) -> s { operation = l }
+                  (Variable op@(SupplyRetaining _), True) -> doArithmetic . doDistributive op $ s
+                  (Variable op@(SupplyZeroing _), True) -> doArithmetic . doDistributive op $ s
+                  (Variable r, _) -> doDistributive r s
+                  (Output Print, _) -> s { output = PrintV (egress s) }
+                  (Output Bell, _) -> s { output = RingBell }
+                  (Math l, _) -> s { operation = l }
               where
                 doDistributive :: VariableOperation -> EngineState -> EngineState
                 doDistributive op s@(MkState { ingress = (ing@(_, a'), b), egress = (ex, ex'), store = str, first = fst }) = case op of
@@ -137,19 +168,18 @@ bindOperations vs us = operations
   where
   -- this is lefties alone and righties as data with variable
   operations :: [Operation]
-  operations = fmap bindVariableOperation <$> evalState (mapM pairVars us) vs
+  operations = either3ToOperation . fmap bindVariableOperation <$> evalState (mapM pairVars us) vs
     where
       pairVars :: UnboundOperation -> State [Int] PairedOperation
-      pairVars (Left l) =
-        get >>= \vars -> case vars of
-            [] -> error "ran out of vars :("
-            _  -> return (vars, Left l)
-            >>= \(v, e) -> put v >> return e
       pairVars (Right r) =
         get >>= \vars -> case vars of
             []   -> error "ran out of vars :("
             v:vs -> return (vs, Right (v, r))
           >>= \(v, e) -> put v >> return e
+      pairVars (Left l) =
+        get >>= \vars -> (\(v, e) -> put v >> return e) (vars, Left l)
+      pairVars (Middle m) =
+        get >>= \vars -> (\(v, e) -> put v >> return e) (vars, Middle m)
 
       bindVariableOperation :: (Int, UnboundVariableOperation) -> VariableOperation
       bindVariableOperation (n, UnboundSupplyRetaining) = SupplyRetaining n
@@ -182,9 +212,11 @@ main = do
         Left Add,
         Right UnboundSupplyZeroing,
         Right UnboundSupplyRetaining,
+        Middle Print, Middle Bell,
         Right UnboundStore,
         Right UnboundSupplyZeroing,
         Right UnboundSupplyZeroing,
+        Middle Print, Middle Bell,
         Right UnboundStore
         ]
   let inputVars = [0, 1, 5, 1, 5, 6]
@@ -195,18 +227,22 @@ main = do
 
   putStrLn . (++) "Initial Operations: " $ show . prettyPrintEither $ inputOps
   putStrLn $ "Initial Variables: " ++ show inputVars
-  putStrLn $ "Initial Paramters: " ++ show inputParams
+  putStrLn $ "Initial Parameters: " ++ show inputParams
 
-  print . prettyPrintEither . take 20 $ opChain
-  print . take 20 . map (take 10) $ computedValues
-  print . dropWhile (\n -> n !! 5 == 0) . map (take 10) $ computedValues
-  return ()
+  print . take 20 $ opChain
+  mapM_ processOutput computedValues
+
   where
+    processOutput :: OutputValue -> IO ()
+    processOutput (PrintV a) = print a
+    processOutput RingBell   = putChar '\a' >> putStrLn "Operator Attention - Press enter to resume analysis: " >> getLine >> return ()
+    processOutput None       = return ()
+
     readCard :: FilePath -> IO T.Text
     readCard = IO.readFile
 
-    prettyPrintEither :: (Functor f, Show a, Show b) => f (Either a b) -> f String
-    prettyPrintEither = (either show show <$>)
+    prettyPrintEither :: (Functor f, Show a, Show b, Show c) => f (Either3 a b c) -> f String
+    prettyPrintEither = (either3 show show show <$>)
 
     parseOperation :: OperationPunchCard -> UnboundOperation
     parseOperation card =
