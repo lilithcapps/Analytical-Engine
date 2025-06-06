@@ -1,12 +1,16 @@
-{-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 {-# OPTIONS_GHC -Wno-unused-local-binds #-}
-{-# LANGUAGE InstanceSigs      #-}
+{-# LANGUAGE MultiWayIf        #-}
 
+import           Cards                    hiding (addition, backwards,
+                                           backwardsCond, divide, forwards,
+                                           forwardsCond, loadPreserve, loadZero,
+                                           multiply, store, storePrimed,
+                                           subtraction)
 import           Control.Lens             (ix, (&), (.~))
 import           Control.Monad.State.Lazy
-import           Data.Char                (intToDigit)
+import           Data.Data                (Data (toConstr), showConstr)
 import qualified Data.Text.Lazy           as T
 import qualified Data.Text.Lazy.IO        as IO
 import           Minecart                 (Minecart, backwardsN, dismount,
@@ -14,36 +18,6 @@ import           Minecart                 (Minecart, backwardsN, dismount,
 import           Prelude                  hiding (Left, Right)
 import           System.IO                (hFlush, stdout)
 
-type DistributivePunchCard = NumberPunchCard
-type NumericPunchCard = NumberPunchCard
-type NumberPunchCard = PunchCard
-
-type OperationPunchCard = PunchCard
-
-type PunchCard = [PunchCardLine]
-type PunchCardLine = String
-
-processOperation :: (MathsOperation -> b) -> (OutputOperation -> b) -> (a -> b) -> ProcessOperation a -> b
-processOperation f1 f2 f3 e = case e of
-  Math e     -> f1 e
-  Output e   -> f2 e
-  Variable e -> f3 e
-
-instance Functor ProcessOperation where
-  fmap :: (a -> b) -> ProcessOperation a  -> ProcessOperation b
-  fmap f e = case e of
-    Math m     -> Math m
-    Output o   -> Output o
-    Variable v -> Variable (f v)
-
-
-type UnboundOperation = ProcessOperation UnboundVariableOperation
-type PairedOperation = ProcessOperation (Int, UnboundVariableOperation)
-
-data ProcessOperation a = Math MathsOperation | Output OutputOperation | Variable a
-  deriving Show
-
-type Operation = ProcessOperation VariableOperation
 
 type MinecartM = Maybe (Minecart Operation [Operation] [Operation])
 type IngressAxis = ((Integer, Integer), Integer)
@@ -63,33 +37,8 @@ data EngineState = MkState {
   output    :: OutputValue
 }
 
-data MathsOperation = Add | Subtract | Multiply | Divide
-  deriving Show
-data OutputOperation = Print | Bell
-  deriving Show
 data OutputValue = PrintV EgressAxis | RingBell | None
   deriving (Show, Eq)
-
-data UnboundVariableOperation =
-  UnboundSupplyRetaining
-  | UnboundSupplyZeroing
-  | UnboundStore
-  | UnboundStorePrimed
-  | UnboundForwards
-  | UnboundForwardsCond
-  | UnboundBackwards
-  | UnboundBackwardsCond
-  deriving Show
-data VariableOperation =
-  SupplyRetaining Int
-  | SupplyZeroing Int
-  | Store Int
-  | StorePrimed Int
-  | Forwards Int
-  | ForwardsCond Int
-  | Backwards Int
-  | BackwardsCond Int
-  deriving Show
 
 applyParameters :: [Integer] -> [Operation] -> [OutputValue]
 applyParameters params ops = filter (/= None) states
@@ -99,7 +48,7 @@ applyParameters params ops = filter (/= None) states
     eAxis = (0, 0) :: EgressAxis
 
     states :: [OutputValue]
-    states = output <$> evaluateState (MkState (mount ops) iAxis eAxis Add str False False None)
+    states = output <$> evaluateState (MkState (mount ops) iAxis eAxis Addition str False False None)
       where
         getOperation :: EngineState -> Maybe Operation
         getOperation = dismount <=< minecart
@@ -153,43 +102,14 @@ applyParameters params ops = filter (/= None) states
                 doArithmetic :: EngineState -> EngineState
                 doArithmetic s@(MkState { ingress = ((a, a'), b), egress = (_, ex')}) =
                   let (eAxis, lev) = case operation s of
-                        Add      -> ((a + b, ex'), lever s)
-                        Subtract -> ((a - b, ex'), (fst eAxis < 0) || lever s)
+                        Addition      -> ((a + b, ex'), lever s)
+                        Subtraction -> ((a - b, ex'), (fst eAxis < 0) || lever s)
                         Multiply -> ((a * b, ex'), lever s)
                         Divide   -> ((a `div` b, a `mod` b), lever s)
                   in s { egress = eAxis, lever = lev }
 
-bindOperations :: [Int] -> [UnboundOperation] -> [Operation]
-bindOperations vs us = operations
-  where
-  -- this is lefties alone and righties as data with variable
-  operations :: [Operation]
-  operations = fmap bindVariableOperation <$> evalState (mapM pairVars us) vs
-    where
-      pairVars :: UnboundOperation -> State [Int] PairedOperation
-      pairVars (Variable r) =
-        get >>= \vars -> case vars of
-            []   -> error "ran out of vars :("
-            v:vs -> return (vs, Variable (v, r))
-          >>= \(v, e) -> put v >> return e
-      pairVars (Math l) =
-        get >>= \vars -> (\(v, e) -> put v >> return e) (vars, Math l)
-      pairVars (Output m) =
-        get >>= \vars -> (\(v, e) -> put v >> return e) (vars, Output m)
-
-      bindVariableOperation :: (Int, UnboundVariableOperation) -> VariableOperation
-      bindVariableOperation (n, UnboundSupplyRetaining) = SupplyRetaining n
-      bindVariableOperation (n, UnboundSupplyZeroing)   = SupplyZeroing n
-      bindVariableOperation (n, UnboundStore)           = Store n
-      bindVariableOperation (n, UnboundStorePrimed)     = StorePrimed n
-      bindVariableOperation (n, UnboundForwards)        = Forwards n
-      bindVariableOperation (n, UnboundBackwards)       = Backwards n
-      bindVariableOperation (n, UnboundForwardsCond)    = ForwardsCond n
-      bindVariableOperation (n, UnboundBackwardsCond)   = BackwardsCond n
-
-
-main :: IO ()
-main = do
+runProgram :: IO ()
+runProgram = do
   putStr "Please enter the name of the program to analyse [default]: "
   input <- getLine
   let programDirectory = "programs/" ++ if input /= "" then input else "default"
@@ -198,32 +118,18 @@ main = do
   distributiveFile <- readCard $ programDirectory ++ "/loadStore.pc"
 
   let operations :: [UnboundOperation]
-      operations = parseOperation . lines . T.unpack <$> T.splitOn "-\r\n" arithmeticString
+      operations = parseOperation <$> textToList arithmeticString
   let distributive :: [Int]
-      distributive = parseVariable . lines . T.unpack <$> T.splitOn "-\r\n" distributiveFile
+      distributive = parseVariable <$> textToList distributiveFile
   let numbers :: [Integer]
-      numbers = parseNumeric . lines . T.unpack <$> T.splitOn "-\r\n" numericFile
+      numbers = parseNumeric <$> textToList numericFile
 
-  let inputOps = [
-        Math Add,
-        Variable UnboundSupplyZeroing,
-        Variable UnboundSupplyRetaining,
-        Output Print, Output Bell,
-        Variable UnboundStore,
-        Variable UnboundSupplyZeroing,
-        Variable UnboundSupplyZeroing,
-        Output Print, Output Bell,
-        Variable UnboundStore
-        ]
-  let inputVars = [0, 1, 5, 1, 5, 6]
-  let inputParams = [5, 10]
+  let opChain = bindOperations distributive operations
+  let computedValues = applyParameters numbers opChain
 
-  let opChain = bindOperations inputVars inputOps
-  let computedValues = applyParameters inputParams opChain
-
-  putStrLn . (++) "Initial Operations: " $ show . prettyPrintEither $ inputOps
-  putStrLn $ "Initial Variables: " ++ show inputVars
-  putStrLn $ "Initial Parameters: " ++ show inputParams
+  putStrLn . (++) "Initial Operations: " $ show . prettyPrintEither $ operations
+  putStrLn $ "Initial Variables: " ++ show distributive
+  putStrLn $ "Initial Parameters: " ++ show numbers
 
   print . take 20 $ opChain
   mapM_ processOutput computedValues
@@ -231,7 +137,10 @@ main = do
   where
     processOutput :: OutputValue -> IO ()
     processOutput (PrintV a) = print a
-    processOutput RingBell   = putChar '\a' >> putStr "Operator Attention - Press enter to resume analysis" >> hFlush stdout >> getLine >> return ()
+    processOutput RingBell   = putChar '\a'
+                              >> putStr "Operator Attention - Press [Enter] to resume analysis"
+                              >> hFlush stdout
+                              >> getLine >> return ()
     processOutput None       = return ()
 
     readCard :: FilePath -> IO T.Text
@@ -240,55 +149,35 @@ main = do
     prettyPrintEither :: (Functor f, Show a) => f (ProcessOperation a) -> f String
     prettyPrintEither = (processOperation show show show <$>)
 
-    parseOperation :: OperationPunchCard -> UnboundOperation
-    parseOperation card =
-      if | card == addCard            -> Math Add
-          | card == subtractCard      -> Math Subtract
-          | card == multiplyCard      -> Math Multiply
-          | card == divideCard        -> Math Divide
-          | card == loadPreserveCard  -> Variable UnboundSupplyRetaining
-          | card == loadZeroCard      -> Variable UnboundSupplyZeroing
-          | card == storeCard         -> Variable UnboundStore
-          | card == storePrimedCard   -> Variable UnboundStorePrimed
-          | card == forwardsCard      -> Variable UnboundForwards
-          | card == backwardsCard     -> Variable UnboundBackwards
-          | card == forwardsCondCard  -> Variable UnboundForwards
-          | card == backwardsCondCard -> Variable UnboundBackwards
-          | True                      -> error $ "unknown operation card: " ++ show card
-      where
-        addCard            = ["* ", "  ", "  ", "  ", "  "]
-        subtractCard       = [" *", "  ", "  ", "  ", "  "]
-        multiplyCard       = ["  ", "* ", "  ", "  ", "  "]
-        divideCard         = ["  ", " *", "  ", "  ", "  "]
-        loadPreserveCard   = ["  ", "  ", "* ", "  ", "  "]
-        loadZeroCard       = ["  ", "  ", " *", "  ", "  "]
-        storeCard          = ["  ", "  ", "  ", "* ", "  "]
-        storePrimedCard    = ["  ", "  ", "  ", " *", "  "]
-        forwardsCard       = ["* ", "  ", "  ", "  ", "* "]
-        backwardsCard      = [" *", "  ", "  ", "  ", "* "]
-        forwardsCondCard   = ["* ", "  ", "  ", "  ", " *"]
-        backwardsCondCard  = [" *", "  ", "  ", "  ", " *"]
+    textToList s = lines . T.unpack <$> T.splitOn "-\r\n" s
 
-    parseVariable :: DistributivePunchCard -> Int
-    parseVariable = read . parseCardNumber
 
-    parseNumeric :: NumericPunchCard -> Integer
-    parseNumeric []   = error "empty punchcard"
-      -- remove the first char from each line of the card
-    parseNumeric card = read $ parseSign card : parseCardNumber (tail <$> card) -- this removes the leading space in numeric cards
+    
 
-    parseSign [] = error "empty punchcard"
-    parseSign card = case head . head $ card of
-      '*' -> '-'
-      ' ' -> '+'
-      _   -> error $ "badly formatted punchcard: " ++ show card
+    conName :: Data a => a -> String
+    conName = showConstr . toConstr
 
-    parseCardNumber :: NumberPunchCard -> String
-    parseCardNumber [] = error "empty punchcard"
-    parseCardNumber cardLines =
-      [ intToDigit (col + 1)
-        | row <- [0..length . head $ cardLines]
-        , col <- [0..length cardLines]
-        , let val = cardLines !! row !! col
-        , val == '*'
-      ]
+  -- let inputOps = [
+  --       Math Addition,
+  --       Variable UnboundSupplyZeroing,
+  --       Variable UnboundSupplyRetaining,
+  --       Output Print, Output Bell,
+  --       Variable UnboundStore,
+  --       Variable UnboundSupplyZeroing,
+  --       Variable UnboundSupplyZeroing,
+  --       Output Print, Output Bell,
+  --       Variable UnboundStore
+  --       ]
+  -- let inputVars = [0, 1, 5, 1, 5, 6]
+  -- let inputParams = [5, 10]
+
+main :: IO ()
+main = do
+  putStrLn "[r]un a program"
+  putStrLn "[c]reate a program"
+  input <- readLn :: IO String
+  if | ((input == "r") || (input == "return"))   -> runProgram
+     | ((input == "r") || (input == "return")) -> createProgram
+     | True              -> putStrLn "invalid selection" >> main
+
+  return ()
