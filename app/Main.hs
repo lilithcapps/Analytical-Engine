@@ -12,6 +12,7 @@ import qualified Data.Text.Lazy.IO        as IO
 import           Minecart                 (Minecart, backwardsN, dismount,
                                            forwardsN, mount, next)
 import           Prelude                  hiding (Left, Right)
+import           System.IO                (hFlush, stdout)
 
 type DistributivePunchCard = NumberPunchCard
 type NumericPunchCard = NumberPunchCard
@@ -22,32 +23,27 @@ type OperationPunchCard = PunchCard
 type PunchCard = [PunchCardLine]
 type PunchCardLine = String
 
-data Either3 a b c = Left a | Middle b | Right c
-either3 :: (a -> d) -> (b -> d) -> (c -> d) -> Either3 a b c -> d
-either3 f1 f2 f3 e = case e of
-  Left e   -> f1 e
-  Middle e -> f2 e
-  Right e  -> f3 e
+processOperation :: (MathsOperation -> b) -> (OutputOperation -> b) -> (a -> b) -> ProcessOperation a -> b
+processOperation f1 f2 f3 e = case e of
+  Math e     -> f1 e
+  Output e   -> f2 e
+  Variable e -> f3 e
 
-instance Functor (Either3 a b) where
-  fmap :: (c -> d) -> Either3 a b c -> Either3 a b d
+instance Functor ProcessOperation where
+  fmap :: (a -> b) -> ProcessOperation a  -> ProcessOperation b
   fmap f e = case e of
-    Left l   -> Left l
-    Middle m -> Middle m
-    Right r  -> Right (f r)
-
-either3ToOperation :: Either3 MathsOperation OutputOperation VariableOperation -> Operation
-either3ToOperation e = case e of
-  Left e   -> Math e
-  Middle e -> Output e
-  Right e  -> Variable e
+    Math m     -> Math m
+    Output o   -> Output o
+    Variable v -> Variable (f v)
 
 
-type UnboundOperation = Either3 MathsOperation OutputOperation UnboundVariableOperation
-type PairedOperation = Either3 MathsOperation OutputOperation (Int, UnboundVariableOperation)
+type UnboundOperation = ProcessOperation UnboundVariableOperation
+type PairedOperation = ProcessOperation (Int, UnboundVariableOperation)
 
-data Operation = Math MathsOperation | Output OutputOperation | Variable VariableOperation
+data ProcessOperation a = Math MathsOperation | Output OutputOperation | Variable a
   deriving Show
+
+type Operation = ProcessOperation VariableOperation
 
 type MinecartM = Maybe (Minecart Operation [Operation] [Operation])
 type IngressAxis = ((Integer, Integer), Integer)
@@ -168,18 +164,18 @@ bindOperations vs us = operations
   where
   -- this is lefties alone and righties as data with variable
   operations :: [Operation]
-  operations = either3ToOperation . fmap bindVariableOperation <$> evalState (mapM pairVars us) vs
+  operations = fmap bindVariableOperation <$> evalState (mapM pairVars us) vs
     where
       pairVars :: UnboundOperation -> State [Int] PairedOperation
-      pairVars (Right r) =
+      pairVars (Variable r) =
         get >>= \vars -> case vars of
             []   -> error "ran out of vars :("
-            v:vs -> return (vs, Right (v, r))
+            v:vs -> return (vs, Variable (v, r))
           >>= \(v, e) -> put v >> return e
-      pairVars (Left l) =
-        get >>= \vars -> (\(v, e) -> put v >> return e) (vars, Left l)
-      pairVars (Middle m) =
-        get >>= \vars -> (\(v, e) -> put v >> return e) (vars, Middle m)
+      pairVars (Math l) =
+        get >>= \vars -> (\(v, e) -> put v >> return e) (vars, Math l)
+      pairVars (Output m) =
+        get >>= \vars -> (\(v, e) -> put v >> return e) (vars, Output m)
 
       bindVariableOperation :: (Int, UnboundVariableOperation) -> VariableOperation
       bindVariableOperation (n, UnboundSupplyRetaining) = SupplyRetaining n
@@ -194,10 +190,12 @@ bindOperations vs us = operations
 
 main :: IO ()
 main = do
-  let programDirectory = "programs/default/"
-  arithmeticString <- readCard $ programDirectory ++ "operations.pc"
-  numericFile <- readCard $ programDirectory ++ "numbers.pc"
-  distributiveFile <- readCard $ programDirectory ++ "loadStore.pc"
+  putStr "Please enter the name of the program to analyse [default]: "
+  input <- getLine
+  let programDirectory = "programs/" ++ if input /= "" then input else "default"
+  arithmeticString <- readCard $ programDirectory ++ "/operations.pc"
+  numericFile <- readCard $ programDirectory ++ "/numbers.pc"
+  distributiveFile <- readCard $ programDirectory ++ "/loadStore.pc"
 
   let operations :: [UnboundOperation]
       operations = parseOperation . lines . T.unpack <$> T.splitOn "-\r\n" arithmeticString
@@ -206,18 +204,16 @@ main = do
   let numbers :: [Integer]
       numbers = parseNumeric . lines . T.unpack <$> T.splitOn "-\r\n" numericFile
 
-  let storeValues = applyParameters numbers $ bindOperations distributive operations
-
   let inputOps = [
-        Left Add,
-        Right UnboundSupplyZeroing,
-        Right UnboundSupplyRetaining,
-        Middle Print, Middle Bell,
-        Right UnboundStore,
-        Right UnboundSupplyZeroing,
-        Right UnboundSupplyZeroing,
-        Middle Print, Middle Bell,
-        Right UnboundStore
+        Math Add,
+        Variable UnboundSupplyZeroing,
+        Variable UnboundSupplyRetaining,
+        Output Print, Output Bell,
+        Variable UnboundStore,
+        Variable UnboundSupplyZeroing,
+        Variable UnboundSupplyZeroing,
+        Output Print, Output Bell,
+        Variable UnboundStore
         ]
   let inputVars = [0, 1, 5, 1, 5, 6]
   let inputParams = [5, 10]
@@ -235,29 +231,29 @@ main = do
   where
     processOutput :: OutputValue -> IO ()
     processOutput (PrintV a) = print a
-    processOutput RingBell   = putChar '\a' >> putStrLn "Operator Attention - Press enter to resume analysis: " >> getLine >> return ()
+    processOutput RingBell   = putChar '\a' >> putStr "Operator Attention - Press enter to resume analysis" >> hFlush stdout >> getLine >> return ()
     processOutput None       = return ()
 
     readCard :: FilePath -> IO T.Text
     readCard = IO.readFile
 
-    prettyPrintEither :: (Functor f, Show a, Show b, Show c) => f (Either3 a b c) -> f String
-    prettyPrintEither = (either3 show show show <$>)
+    prettyPrintEither :: (Functor f, Show a) => f (ProcessOperation a) -> f String
+    prettyPrintEither = (processOperation show show show <$>)
 
     parseOperation :: OperationPunchCard -> UnboundOperation
     parseOperation card =
-      if | card == addCard            -> Left Add
-          | card == subtractCard      -> Left Subtract
-          | card == multiplyCard      -> Left Multiply
-          | card == divideCard        -> Left Divide
-          | card == loadPreserveCard  -> Right UnboundSupplyRetaining
-          | card == loadZeroCard      -> Right UnboundSupplyZeroing
-          | card == storeCard         -> Right UnboundStore
-          | card == storePrimedCard   -> Right UnboundStorePrimed
-          | card == forwardsCard      -> Right UnboundForwards
-          | card == backwardsCard     -> Right UnboundBackwards
-          | card == forwardsCondCard  -> Right UnboundForwards
-          | card == backwardsCondCard -> Right UnboundBackwards
+      if | card == addCard            -> Math Add
+          | card == subtractCard      -> Math Subtract
+          | card == multiplyCard      -> Math Multiply
+          | card == divideCard        -> Math Divide
+          | card == loadPreserveCard  -> Variable UnboundSupplyRetaining
+          | card == loadZeroCard      -> Variable UnboundSupplyZeroing
+          | card == storeCard         -> Variable UnboundStore
+          | card == storePrimedCard   -> Variable UnboundStorePrimed
+          | card == forwardsCard      -> Variable UnboundForwards
+          | card == backwardsCard     -> Variable UnboundBackwards
+          | card == forwardsCondCard  -> Variable UnboundForwards
+          | card == backwardsCondCard -> Variable UnboundBackwards
           | True                      -> error $ "unknown operation card: " ++ show card
       where
         addCard            = ["* ", "  ", "  ", "  ", "  "]
