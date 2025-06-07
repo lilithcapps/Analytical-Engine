@@ -3,19 +3,34 @@
 {-# OPTIONS_GHC -Wno-unused-local-binds #-}
 {-# LANGUAGE MultiWayIf        #-}
 
-import           Cards                    hiding (addition, backwards,
-                                           backwardsCond, divide, forwards,
-                                           forwardsCond, loadPreserve, loadZero,
-                                           multiply, store, storePrimed,
-                                           subtraction)
+import           Cards                    (DistributiveRecord (name),
+                                           MathsOperation (..), NumberPunchCard,
+                                           NumericPunchCard, Operation,
+                                           OperationPunchCard,
+                                           OutputOperation (Bell, Print),
+                                           ProcessOperation (..), PunchCard,
+                                           UnboundOperation,
+                                           VariableOperation (..),
+                                           bindOperations, isDistributive,
+                                           parseNumeric, parseOperation,
+                                           parseOperationToString,
+                                           parseStringToOperation,
+                                           parseStringToParameter,
+                                           parseStringToVariable, parseVariable,
+                                           processOperation)
+import qualified Cards                    as C
+
 import           Control.Lens             (ix, (&), (.~))
 import           Control.Monad.State.Lazy
 import           Data.Data                (Data (toConstr), showConstr)
+import           Data.Maybe               (fromMaybe)
 import qualified Data.Text.Lazy           as T
 import qualified Data.Text.Lazy.IO        as IO
 import           Minecart                 (Minecart, backwardsN, dismount,
                                            forwardsN, mount, next)
 import           Prelude                  hiding (Left, Right)
+import           System.Directory         (createDirectoryIfMissing)
+import           System.FilePath.Windows  (takeDirectory)
 import           System.IO                (hFlush, stdout)
 
 
@@ -110,12 +125,12 @@ applyParameters params ops = filter (/= None) states
 
 runProgram :: IO ()
 runProgram = do
-  putStr "Please enter the name of the program to analyse [default]: "
+  putStr "Please enter the name of the program to analyse [default]: " >> hFlush stdout
   input <- getLine
-  let programDirectory = "programs/" ++ if input /= "" then input else "default"
-  arithmeticString <- readCard $ programDirectory ++ "/operations.pc"
-  numericFile <- readCard $ programDirectory ++ "/numbers.pc"
-  distributiveFile <- readCard $ programDirectory ++ "/loadStore.pc"
+  let programDirectory = "programs\\" ++ if input /= "" then input else "default"
+  arithmeticString <- readCard $ programDirectory ++ "\\operations.pc"
+  numericFile <- readCard $ programDirectory ++ "\\parametric.pc"
+  distributiveFile <- readCard $ programDirectory ++ "\\distributive.pc"
 
   let operations :: [UnboundOperation]
       operations = parseOperation <$> textToList arithmeticString
@@ -149,13 +164,99 @@ runProgram = do
     prettyPrintEither :: (Functor f, Show a) => f (ProcessOperation a) -> f String
     prettyPrintEither = (processOperation show show show <$>)
 
-    textToList s = lines . T.unpack <$> T.splitOn "-\r\n" s
+    textToList s = lines . T.unpack <$> T.splitOn "-\n" s
 
 
-    
+createProgram :: IO ()
+createProgram = do
+  putStr "enter the program name: " >> hFlush stdout
+  n <- getLine
+  putStrLn "enter the operations"
+  putStrLn "press enter after each operation"
+  putStrLn "press enter with no input when you have entered all the required operations"
+  putStrLn $ "valid operations are: "
+      ++ "\n\t mathematical: "
+      ++ name C.addition ++ " | "
+      ++ name C.subtraction ++ " | "
+      ++ name C.multiply ++ " | "
+      ++ name C.divide
+      ++ "\n\t informational: "
+      ++ name C.write ++ " | "
+      ++ name C.bell
+      ++ "\n\t distributive: "
+      ++ name C.loadPreserve ++ " | "
+      ++ name C.loadZero ++ " | "
+      ++ name C.store ++ " | "
+      ++ name C.storePrimed ++ " | "
+      ++ name C.forwards ++ " | "
+      ++ name C.backwards ++ " | "
+      ++ name C.forwardsCond ++ " | "
+      ++ name C.backwardsCond
+
+  ops <- getOps
+  _ <- writeCards n "operations" ops
+
+  putStrLn "enter the distributive variables"
+  putStrLn "press enter after each variable"
+  putStrLn "variables should be unsigned, and between 1 and 999 (inclusive)"
+  putStrLn "the operation the variable will be used for will be printed before each input"
+  vars <- mapM getVar . filter isDistributive $ ops
+  _ <- writeCards n "distributive" vars
+
+  putStrLn "enter the parametric variables"
+  putStrLn "press enter after each variable"
+  putStrLn "variables are signed, and may be up to 50 digits long"
+  putStrLn "the positive sign may be omitted"
+  putStrLn "press enter with no input when you have entered all the required parameters"
+  params <- getParams
+  _ <- writeCards n "parametric" params
+
+  return ()
+
+  where
+    getVar :: OperationPunchCard -> IO NumberPunchCard
+    getVar op = do
+      putStr (fromMaybe "" (parseOperationToString op) ++ ": ") >> hFlush stdout
+      v <- getLine
+      case parseStringToVariable v of
+        Nothing  -> putChar '\a' >> putStrLn "invalid input" >> getVar op
+        Just var -> return var
+
+    getOps :: IO [OperationPunchCard]
+    getOps = do
+      o <- getLine
+      if o == ""
+      then return []
+      else do
+        case parseStringToOperation o of
+          Nothing -> putChar '\a' >> putStrLn "invalid operation" >> getOps
+          Just v  -> getOps >>= return . (v:)
+
+    getParams :: IO [NumericPunchCard]
+    getParams = do
+      p <- getLine
+      if p == ""
+      then return []
+      else do
+        case parseStringToParameter p of
+          Nothing    -> putChar '\a' >> putStrLn "invalid parameter" >> getParams
+          Just param -> getParams >>= return . (param:)
+
+    writeCards :: String -> String -> [PunchCard] -> IO ()
+    writeCards name filename op = createAndWriteFile ("programs\\" ++ name ++ "\\" ++ filename ++ ".pc") 
+      $ T.unpack . T.intercalate "-\n" $ (T.pack . unlines <$> op) -- init removes the trailing \n 
+      where
+        createAndWriteFile :: FilePath -> String -> IO ()
+        createAndWriteFile path content = do
+          createDirectoryIfMissing True $ takeDirectory path
+
+          writeFile path content
 
     conName :: Data a => a -> String
     conName = showConstr . toConstr
+
+  -- putStrLn "[e]dit   - edit a program"
+
 
   -- let inputOps = [
   --       Math Addition,
@@ -173,11 +274,11 @@ runProgram = do
 
 main :: IO ()
 main = do
-  putStrLn "[r]un a program"
-  putStrLn "[c]reate a program"
-  input <- readLn :: IO String
+  putStrLn "[r]un    - run a program"
+  putStrLn "[c]reate - create a program"
+  input <- getLine :: IO String
   if | ((input == "r") || (input == "return"))   -> runProgram
-     | ((input == "r") || (input == "return")) -> createProgram
+     | ((input == "c") || (input == "create")) -> createProgram
      | True              -> putStrLn "invalid selection" >> main
 
   return ()

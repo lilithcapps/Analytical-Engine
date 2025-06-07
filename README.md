@@ -2,7 +2,7 @@
 
 ## Programs
 
-A program is a folder that contains a `numbers.pc`, a `loadstore.pc`, and an `operations.pc`. These are "PunchCard" files, and should consist of one or more "PunchCards", separated by a newline and a `--`. Information on PunchCard formats can be found [here](#punchcard-formatting)
+A program is a folder that contains a `numbers.pc`, a `loadstore.pc`, and an `operations.pc`. These are "PunchCard" files, and should consist of one or more "PunchCards", separated by a newline and a `-`. Information on PunchCard formats can be found [here](#punchcard-formatting)
 
 ## PunchCard Formatting
 

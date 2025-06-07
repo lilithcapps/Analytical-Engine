@@ -1,9 +1,11 @@
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE MultiWayIf   #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE InstanceSigs       #-}
+{-# LANGUAGE MultiWayIf         #-}
 module Cards where
 import           Control.Monad.State.Lazy (MonadState (get, put), State,
                                            evalState)
 import           Data.Char                (intToDigit, toLower)
+import           Data.Data                (Data)
 import           Text.Printf              (printf)
 import           Text.Read                (readMaybe)
 
@@ -12,6 +14,11 @@ type NumericPunchCard = NumberPunchCard
 type NumberPunchCard = PunchCard
 
 type OperationPunchCard = PunchCard
+
+data DistributiveRecord = MkOp {
+  name :: String,
+  card :: DistributivePunchCard
+}
 
 type PunchCard = [PunchCardLine]
 type PunchCardLine = String
@@ -38,10 +45,12 @@ data ProcessOperation a = Math MathsOperation | Output OutputOperation | Variabl
 
 type Operation = ProcessOperation VariableOperation
 
+
+
 data MathsOperation = Addition | Subtraction | Multiply | Divide
-  deriving Show
+  deriving (Show, Data)
 data OutputOperation = Print | Bell
-  deriving Show
+  deriving (Show, Data)
 
 data UnboundVariableOperation =
   UnboundSupplyRetaining
@@ -63,7 +72,7 @@ data VariableOperation =
   | ForwardsCond Int
   | Backwards Int
   | BackwardsCond Int
-  deriving Show
+  deriving (Show, Data)
 
 bindOperations :: [Int] -> [UnboundOperation] -> [Operation]
 bindOperations vs us = operations
@@ -94,67 +103,92 @@ bindOperations vs us = operations
       bindVariableOperation (n, UnboundBackwardsCond)   = BackwardsCond n
 
 parseOperation :: OperationPunchCard -> UnboundOperation
-parseOperation card =
-  if  | card == addition      -> Math Addition
-      | card == subtraction   -> Math Subtraction
-      | card == multiply      -> Math Multiply
-      | card == divide        -> Math Divide
-      | card == loadPreserve  -> Variable UnboundSupplyRetaining
-      | card == loadZero      -> Variable UnboundSupplyZeroing
-      | card == store         -> Variable UnboundStore
-      | card == storePrimed   -> Variable UnboundStorePrimed
-      | card == forwards      -> Variable UnboundForwards
-      | card == backwards     -> Variable UnboundBackwards
-      | card == forwardsCond  -> Variable UnboundForwards
-      | card == backwardsCond -> Variable UnboundBackwards
-      | True                  -> error $ "unknown operation card: " ++ show card
+parseOperation c
+    | c == card addition      = Math Addition
+    | c == card subtraction   = Math Subtraction
+    | c == card multiply      = Math Multiply
+    | c == card divide        = Math Divide
+    | c == card bell          = Output Bell
+    | c == card write         = Output Print
+    | c == card loadPreserve  = Variable UnboundSupplyRetaining
+    | c == card loadZero      = Variable UnboundSupplyZeroing
+    | c == card store         = Variable UnboundStore
+    | c == card storePrimed   = Variable UnboundStorePrimed
+    | c == card forwards      = Variable UnboundForwards
+    | c == card backwards     = Variable UnboundBackwards
+    | c == card forwardsCond  = Variable UnboundForwards
+    | c == card backwardsCond = Variable UnboundBackwards
+    | otherwise             = error $ "unknown operation card: " ++ show c
 
 parseStringToOperation :: String -> Maybe OperationPunchCard
-parseStringToOperation s = case toLower <$> s of
-  "addition"      -> Just addition
-  "subtraction"   -> Just subtraction
-  "multiply"      -> Just multiply
-  "divide"        -> Just divide
-  "loadPreserve"  -> Just loadPreserve
-  "loadZero"      -> Just  loadZero
-  "store"         -> Just store
-  "storePrimed"   -> Just storePrimed
-  "forwards"      -> Just forwards
-  "backwards"     -> Just backwards
-  "forwardsCond"  -> Just forwardsCond
-  "backwardsCond" -> Just backwardsCond
-  _               -> Nothing
+parseStringToOperation s
+  | lower s == (lower . name) addition      = Just . card $ addition
+  | lower s == (lower . name) subtraction   = Just . card $ subtraction
+  | lower s == (lower . name) multiply      = Just . card $ multiply
+  | lower s == (lower . name) divide        = Just . card $ divide
+  | lower s == (lower . name) bell          = Just . card $ bell
+  | lower s == (lower . name) write         = Just . card $ write
+  | lower s == (lower . name) loadPreserve  = Just . card $ loadPreserve
+  | lower s == (lower . name) loadZero      = Just . card $ loadZero
+  | lower s == (lower . name) store         = Just . card $ store
+  | lower s == (lower . name) storePrimed   = Just . card $ storePrimed
+  | lower s == (lower . name) forwards      = Just . card $ forwards
+  | lower s == (lower . name) backwards     = Just . card $ backwards
+  | lower s == (lower . name) forwardsCond  = Just . card $ forwardsCond
+  | lower s == (lower . name) backwardsCond = Just . card $ backwardsCond
+  | otherwise                               = Nothing
+  where
+    lower :: (Functor f) => f Char -> f Char
+    lower = fmap toLower
+
+parseOperationToString :: OperationPunchCard -> Maybe String
+parseOperationToString s
+  | s == card addition      = Just . name $ addition
+  | s == card subtraction   = Just . name $ subtraction
+  | s == card multiply      = Just . name $ multiply
+  | s == card divide        = Just . name $ divide
+  | s == card bell          = Just . name $ bell
+  | s == card write         = Just . name $ write
+  | s == card loadPreserve  = Just . name $ loadPreserve
+  | s == card loadZero      = Just . name $ loadZero
+  | s == card store         = Just . name $ store
+  | s == card storePrimed   = Just . name $ storePrimed
+  | s == card forwards      = Just . name $ forwards
+  | s == card backwards     = Just . name $ backwards
+  | s == card forwardsCond  = Just . name $ forwardsCond
+  | s == card backwardsCond = Just . name $ backwardsCond
+  | otherwise               = Nothing
 
 parseStringToVariable :: String -> Maybe NumberPunchCard
 parseStringToVariable a =
   let num = readMaybe a in
   case num of
     Nothing -> Nothing
-    Just num ->
-      if num > 999 then Nothing
-      else Just $ transpose $ parseCharToNumCard <$> a
+    Just n ->
+      if n > (999 :: Integer) then Nothing
+      else Just $ transpose $ parseCharToNumCard <$> printf "%03s" a
 
 parseStringToParameter :: String -> Maybe NumericPunchCard
 parseStringToParameter a =
-  let num = readMaybe a in
+  let num = readMaybe a :: Maybe Integer in
   case num of
     Nothing -> Nothing
-    Just num ->
+    Just n ->
       if
-        | num > 99999999999999999999999999999999999999999999999999 -> Nothing
-        | num < -99999999999999999999999999999999999999999999999999 -> Nothing
-        | num >= 0 -> Just $ transpose $ positive : (parseCharToNumCard <$> printf "%050s" a)
-        | num < 0  -> Just $ transpose $ negative : (parseCharToNumCard <$> (tail . printf "%050s") a)
+        | n > 99999999999999999999999999999999999999999999999999 -> Nothing
+        | n < -99999999999999999999999999999999999999999999999999 -> Nothing
+        | n >= 0 -> Just $ transpose $ positive : (parseCharToNumCard <$> printf "%050s" a)
+        | n < 0  -> Just $ transpose $ negative : (parseCharToNumCard <$> (tail . printf "%050s") a)
         | True -> Nothing
       where
         positive :: [Char]
         positive = [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
         negative :: [Char]
         negative = ['*', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
-        
+
 
 transpose :: [[Char]] -> [[Char]]
-transpose ((a:b:c:d:e:f:g:h:i:j:_) : rest) = 
+transpose ((a:b:c:d:e:f:g:h:i:j:_) : rest) =
   let (a1:b1:c1:d1:e1:f1:g1:h1:i1:j1:_) = transpose rest in
     [a:a1, b:b1, c:c1, d:d1, e:e1, f:f1, g:g1, h:h1, i:i1, j:j1]
 transpose _ = [[],[],[],[],[],[],[],[],[],[]]
@@ -173,31 +207,46 @@ parseCharToNumCard s = case s of
   '9' -> [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '*']
   _   -> error "unreachable code?"
 
+isDistributive :: OperationPunchCard -> Bool
+isDistributive a
+  | a == card loadPreserve = True
+  | a == card loadZero = True
+  | a == card store = True
+  | a == card storePrimed = True
+  | a == card forwards = True
+  | a == card backwards = True
+  | a == card forwardsCond = True
+  | a == card backwardsCond = True
+  | otherwise = False
 
-addition :: OperationPunchCard
-addition      = ["* ", "  ", "  ", "  ", "  "]
-subtraction :: OperationPunchCard
-subtraction   = [" *", "  ", "  ", "  ", "  "]
-multiply :: OperationPunchCard
-multiply      = ["  ", "* ", "  ", "  ", "  "]
-divide :: OperationPunchCard
-divide        = ["  ", " *", "  ", "  ", "  "]
-loadPreserve :: OperationPunchCard
-loadPreserve  = ["  ", "  ", "* ", "  ", "  "]
-loadZero :: OperationPunchCard
-loadZero      = ["  ", "  ", " *", "  ", "  "]
-store :: OperationPunchCard
-store         = ["  ", "  ", "  ", "* ", "  "]
-storePrimed :: OperationPunchCard
-storePrimed   = ["  ", "  ", "  ", " *", "  "]
-forwards :: OperationPunchCard
-forwards      = ["* ", "  ", "  ", "  ", "* "]
-backwards :: OperationPunchCard
-backwards     = [" *", "  ", "  ", "  ", "* "]
-forwardsCond :: OperationPunchCard
-forwardsCond  = ["* ", "  ", "  ", "  ", " *"]
-backwardsCond :: OperationPunchCard
-backwardsCond = [" *", "  ", "  ", "  ", " *"]
+addition      :: DistributiveRecord
+subtraction   :: DistributiveRecord
+multiply      :: DistributiveRecord
+divide        :: DistributiveRecord
+write         :: DistributiveRecord
+bell          :: DistributiveRecord
+loadPreserve  :: DistributiveRecord
+loadZero      :: DistributiveRecord
+store         :: DistributiveRecord
+storePrimed   :: DistributiveRecord
+forwards      :: DistributiveRecord
+backwards     :: DistributiveRecord
+forwardsCond  :: DistributiveRecord
+backwardsCond :: DistributiveRecord
+addition      = MkOp "addition" ["* ", "  ", "  ", "  ", "  "]
+subtraction   = MkOp "subtraction" [" *", "  ", "  ", "  ", "  "]
+multiply      = MkOp "multiplication" ["  ", "* ", "  ", "  ", "  "]
+divide        = MkOp "division" ["  ", " *", "  ", "  ", "  "]
+write         = MkOp "print" ["  ", "  ", "  ", " *", " *"]
+bell          = MkOp "bell" ["  ", "  ", "  ", "* ", "* "]
+loadPreserve  = MkOp "loadPreserve" ["  ", "  ", "* ", "  ", "  "]
+loadZero      = MkOp "loadZero" ["  ", "  ", " *", "  ", "  "]
+store         = MkOp "store" ["  ", "  ", "  ", "* ", "  "]
+storePrimed   = MkOp "storePrimed" ["  ", "  ", "  ", " *", "  "]
+forwards      = MkOp "forwards" ["* ", "  ", "  ", "  ", "* "]
+backwards     = MkOp "backwards" [" *", "  ", "  ", "  ", "* "]
+forwardsCond  = MkOp "forwardsCond" ["* ", "  ", "  ", "  ", " *"]
+backwardsCond = MkOp "backwardsCond" [" *", "  ", "  ", "  ", " *"]
 
 parseVariable :: DistributivePunchCard -> Int
 parseVariable = read . parseCardNumber
@@ -205,20 +254,20 @@ parseVariable = read . parseCardNumber
 parseNumeric :: NumericPunchCard -> Integer
 parseNumeric []   = error "empty punchcard"
     -- remove the first char from each line of the card
-parseNumeric card = read $ parseSign card : parseCardNumber (tail <$> card) -- this removes the leading space in numeric cards
+parseNumeric c = read $ (parseSign c) : parseCardNumber (tail <$> c) -- this removes the leading space in numeric cards
     where
     parseSign [] = error "empty punchcard"
-    parseSign card = case head . head $ card of
+    parseSign c = case head . head $ c of
         '*' -> '-'
-        ' ' -> '+'
-        _   -> error $ "badly formatted punchcard: " ++ show card
+        ' ' -> ' ' 
+        _   -> error $ "badly formatted punchcard: " ++ show c
 
 parseCardNumber :: NumberPunchCard -> String
 parseCardNumber [] = error "empty punchcard"
 parseCardNumber cardLines =
-    [ intToDigit (col + 1)
-    | row <- [0..length . head $ cardLines]
-    , col <- [0..length cardLines]
-    , let val = cardLines !! row !! col
+    [ intToDigit col
+    | row <- [0..(length . head) cardLines - 1]
+    , col <- [0..length cardLines - 1]
+    , let val = cardLines !! col !! row
     , val == '*'
     ]
