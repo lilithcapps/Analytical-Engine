@@ -258,20 +258,6 @@ createProgram = do
   -- putStrLn "[e]dit   - edit a program"
 
 
-  -- let inputOps = [
-  --       Math Addition,
-  --       Variable UnboundSupplyZeroing,
-  --       Variable UnboundSupplyRetaining,
-  --       Output Print, Output Bell,
-  --       Variable UnboundStore,
-  --       Variable UnboundSupplyZeroing,
-  --       Variable UnboundSupplyZeroing,
-  --       Output Print, Output Bell,
-  --       Variable UnboundStore
-  --       ]
-  -- let inputVars = [0, 1, 5, 1, 5, 6]
-  -- let inputParams = [5, 10]
-
 main :: IO ()
 main = do
   putStrLn "[r]un    - run a program"
