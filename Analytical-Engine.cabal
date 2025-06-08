@@ -63,6 +63,7 @@ executable Analytical-Engine
     -- Modules included in this executable, other than Main.
     other-modules:      Minecart
                       , Cards
+                      , Operations
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
