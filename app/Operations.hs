@@ -25,7 +25,7 @@ data EngineState = MkState {
   output    :: OutputValue
 }
 
-data OutputValue = PrintV EgressAxis | RingBell | None
+data OutputValue = PrintV EgressAxis | RingBell | Halt | None
   deriving (Show, Eq)
 
 applyParameters :: [Integer] -> [Operation] -> [OutputValue]
@@ -67,33 +67,38 @@ applyParameters params ops = filter (/= None) states
 
     doOperation :: EngineState -> EngineState
     doOperation s =
-        case getOperation s of
-        Nothing -> s
-        Just op -> case (op, axis s) of
-          (Variable o@(SupplyRetaining _), Second) -> doArithmetic . doDistributive o $ s
-          (Variable o@(SupplyZeroing _), Second) -> doArithmetic . doDistributive o $ s
-          (Variable r, _) -> doDistributive r s
-          (Output Print, _) -> s { output = PrintV (egress s) }
-          (Output Bell, _) -> s { output = RingBell }
-          (Math l, _) -> s { operation = l }
+      case getOperation s of
+      Nothing -> s
+      Just op -> case (op, axis s) of
+        (Variable o@(SupplyRetaining _), Second)  -> doArithmetic . doDistributive o $ s
+        (Variable o@(SupplyZeroing _), Second)    -> doArithmetic . doDistributive o $ s
+        (Variable r, _)                           -> doDistributive r s
+        (Output o, _)                             -> doOutput o s
+        (Math l, _)                               -> s { operation = l }
         where
-        doDistributive :: VariableOperation -> EngineState -> EngineState
-        doDistributive op s@(MkState { ingress = (ing@(_, a'), b), egress = (ex, ex'), store = str }) = case op of
-          SupplyRetaining n -> case axis s of
-            First  -> s { axis = Second, ingress = ((str !! n, a'), b) }
-            Second -> s { axis = First, ingress = (ing, str !! n) }
-          SupplyZeroing n   -> case axis s of
-            First -> s { axis = Second, ingress = ((str !! n, a'), b), store = str & ix n .~ 0 }
-            Second -> s { axis = First, ingress = (ing, str !! n), store = str & ix n .~ 0 }
-          Store n           -> s { store = str & ix n .~ ex}
-          StorePrimed n     -> s { store = str & ix n .~ ex'}
-          _                 -> s
+          doOutput :: OutputOperation -> EngineState -> EngineState
+          doOutput o s = case o of
+            Print      -> s { output = PrintV (egress s) }
+            Bell       -> s { output = RingBell }
+            Cards.Halt -> s { output = Operations.Halt}
 
-        doArithmetic :: EngineState -> EngineState
-        doArithmetic s@(MkState { ingress = ((a, a'), b), egress = (_, ex')}) =
-          let (e, lev) = case operation s of
-                Addition    -> ((a + b, ex'), lever s)
-                Subtraction -> ((a - b, ex'), (a - b < 0) || lever s)
-                Multiply    -> ((a * b, ex'), lever s)
-                Divide      -> ((a `div` b, a `mod` b), lever s)
-          in s { egress = e, lever = lev }
+          doDistributive :: VariableOperation -> EngineState -> EngineState
+          doDistributive op s@(MkState { ingress = (ing@(_, a'), b), egress = (ex, ex'), store = str }) = case op of
+            SupplyRetaining n -> case axis s of
+              First  -> s { axis = Second, ingress = ((str !! n, a'), b) }
+              Second -> s { axis = First, ingress = (ing, str !! n) }
+            SupplyZeroing n   -> case axis s of
+              First -> s { axis = Second, ingress = ((str !! n, a'), b), store = str & ix n .~ 0 }
+              Second -> s { axis = First, ingress = (ing, str !! n), store = str & ix n .~ 0 }
+            Store n           -> s { store = str & ix n .~ ex}
+            StorePrimed n     -> s { store = str & ix n .~ ex'}
+            _                 -> s
+
+          doArithmetic :: EngineState -> EngineState
+          doArithmetic s@(MkState { ingress = ((a, a'), b), egress = (_, ex')}) =
+            let (e, lev) = case operation s of
+                  Addition    -> ((a + b, ex'), lever s)
+                  Subtraction -> ((a - b, ex'), (a - b < 0) || lever s)
+                  Multiply    -> ((a * b, ex'), lever s)
+                  Divide      -> ((a `div` b, a `mod` b), lever s)
+            in s { egress = e, lever = lev }

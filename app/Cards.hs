@@ -49,7 +49,7 @@ type Operation = ProcessOperation VariableOperation
 
 data MathsOperation = Addition | Subtraction | Multiply | Divide
   deriving (Show, Data)
-data OutputOperation = Print | Bell
+data OutputOperation = Print | Bell | Halt
   deriving (Show, Data)
 
 data UnboundVariableOperation =
@@ -108,8 +108,9 @@ parseOperation c
     | c == card subtraction   = Math Subtraction
     | c == card multiply      = Math Multiply
     | c == card divide        = Math Divide
-    | c == card bell          = Output Bell
     | c == card write         = Output Print
+    | c == card bell          = Output Bell
+    | c == card halt          = Output Halt
     | c == card loadPreserve  = Variable UnboundSupplyRetaining
     | c == card loadZero      = Variable UnboundSupplyZeroing
     | c == card store         = Variable UnboundStore
@@ -147,8 +148,9 @@ parseOperationToString s
   | s == card subtraction   = Just . name $ subtraction
   | s == card multiply      = Just . name $ multiply
   | s == card divide        = Just . name $ divide
-  | s == card bell          = Just . name $ bell
   | s == card write         = Just . name $ write
+  | s == card bell          = Just . name $ bell
+  | s == card halt          = Just . name $ halt
   | s == card loadPreserve  = Just . name $ loadPreserve
   | s == card loadZero      = Just . name $ loadZero
   | s == card store         = Just . name $ store
@@ -225,6 +227,7 @@ multiply      :: DistributiveRecord
 divide        :: DistributiveRecord
 write         :: DistributiveRecord
 bell          :: DistributiveRecord
+halt          :: DistributiveRecord
 loadPreserve  :: DistributiveRecord
 loadZero      :: DistributiveRecord
 store         :: DistributiveRecord
@@ -239,6 +242,7 @@ multiply      = MkOp "multiplication" ["  ", "* ", "  ", "  ", "  "]
 divide        = MkOp "division" ["  ", " *", "  ", "  ", "  "]
 write         = MkOp "print" ["  ", "  ", "  ", " *", " *"]
 bell          = MkOp "bell" ["  ", "  ", "  ", "* ", "* "]
+halt          = MkOp "halt" ["  ", "  ", "  ", "**", "**"]
 loadPreserve  = MkOp "loadPreserve" ["  ", "  ", "* ", "  ", "  "]
 loadZero      = MkOp "loadZero" ["  ", "  ", " *", "  ", "  "]
 store         = MkOp "store" ["  ", "  ", "  ", "* ", "  "]
@@ -254,7 +258,7 @@ parseVariable = read . parseCardNumber
 parseNumeric :: NumericPunchCard -> Integer
 parseNumeric []   = error "empty punchcard"
     -- remove the first char from each line of the card
-parseNumeric c = read $ (parseSign c) : parseCardNumber (tail <$> c) -- this removes the leading space in numeric cards
+parseNumeric c = read $ parseSign c : parseCardNumber (tail <$> c) -- this removes the leading space in numeric cards
     where
     parseSign [] = error "empty punchcard"
     parseSign c = case head . head $ c of

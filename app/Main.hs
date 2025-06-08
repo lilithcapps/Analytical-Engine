@@ -17,6 +17,7 @@ import           Cards                    (DistributiveRecord (..),
 import qualified Cards                    as C
 import           Control.Monad.State.Lazy
 import           Data.Data                (Data (toConstr), showConstr)
+import           Data.Functor             ((<&>))
 import           Data.Maybe               (fromMaybe)
 import qualified Data.Text.Lazy           as T
 import qualified Data.Text.Lazy.IO        as IO
@@ -49,14 +50,14 @@ runProgram = do
   putStrLn $ "Initial Variables: " ++ show distributive
   putStrLn $ "Initial Parameters: " ++ show numbers
 
-  -- print . take 20 $ opChain
   mapM_ processOutput computedValues
 
   where
     processOutput :: OutputValue -> IO ()
     processOutput (PrintV a) = print a
     processOutput RingBell   = putChar '\a'
-                              >> putStr "Operator Attention - Press [Enter] to resume analysis"
+                              >> hFlush stdout
+    processOutput Halt       = putStr "Operator Halted - Press [Enter] to resume analysis"
                               >> hFlush stdout
                               >> getLine >> return ()
     processOutput None       = return ()
@@ -72,6 +73,9 @@ runProgram = do
 
 createProgram :: IO ()
 createProgram = do
+  -- putStrLn "[c]reate - create a program"
+  -- putStrLn "[e]dit   - edit a program"
+  -- opt <- getLine
   putStr "enter the program name: " >> hFlush stdout
   n <- getLine
   putStrLn "enter the operations"
@@ -85,7 +89,8 @@ createProgram = do
       ++ name C.divide
       ++ "\n\t informational: "
       ++ name C.write ++ " | "
-      ++ name C.bell
+      ++ name C.bell ++ " | "
+      ++ name C.halt
       ++ "\n\t distributive: "
       ++ name C.loadPreserve ++ " | "
       ++ name C.loadZero ++ " | "
@@ -133,7 +138,7 @@ createProgram = do
       else do
         case parseStringToOperation o of
           Nothing -> putChar '\a' >> putStrLn "invalid operation" >> getOps
-          Just v  -> getOps >>= return . (v:)
+          Just v  -> getOps <&> (v:)
 
     getParams :: IO [NumericPunchCard]
     getParams = do
@@ -143,7 +148,7 @@ createProgram = do
       else do
         case parseStringToParameter p of
           Nothing    -> putChar '\a' >> putStrLn "invalid parameter" >> getParams
-          Just param -> getParams >>= return . (param:)
+          Just param -> getParams <&> (param:)
 
     writeCards :: String -> String -> [PunchCard] -> IO ()
     writeCards name filename op = createAndWriteFile ("programs\\" ++ name ++ "\\" ++ filename ++ ".pc")
@@ -157,9 +162,6 @@ createProgram = do
 
     conName :: Data a => a -> String
     conName = showConstr . toConstr
-
-  -- putStrLn "[e]dit   - edit a program"
-
 
 main :: IO ()
 main = do
