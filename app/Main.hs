@@ -38,7 +38,7 @@ type MinecartM = Maybe (Minecart Operation [Operation] [Operation])
 type IngressAxis = ((Integer, Integer), Integer)
 type EgressAxis = (Integer, Integer)
 type StoreValue = [Integer]
-type TakingFirst = Bool
+data Axis = First | Second
 type RunUpLever = Bool
 
 data EngineState = MkState {
@@ -47,7 +47,7 @@ data EngineState = MkState {
   egress    :: EgressAxis,
   operation :: MathsOperation,
   store     :: StoreValue,
-  first     :: TakingFirst,
+  axis      :: Axis,
   lever     :: RunUpLever,
   output    :: OutputValue
 }
@@ -63,7 +63,7 @@ applyParameters params ops = filter (/= None) states
     eAxis = (0, 0) :: EgressAxis
 
     states :: [OutputValue]
-    states = output <$> evaluateState (MkState (mount ops) iAxis eAxis Addition str False False None)
+    states = output <$> evaluateState (MkState (mount ops) iAxis eAxis Addition str First False None)
       where
         getOperation :: EngineState -> Maybe Operation
         getOperation = dismount <=< minecart
@@ -96,20 +96,22 @@ applyParameters params ops = filter (/= None) states
             doOperation s =
               case getOperation s of
                 Nothing -> s
-                Just op -> case (op, first s) of
-                  (Variable op@(SupplyRetaining _), True) -> doArithmetic . doDistributive op $ s
-                  (Variable op@(SupplyZeroing _), True) -> doArithmetic . doDistributive op $ s
+                Just op -> case (op, axis s) of
+                  (Variable op@(SupplyRetaining _), Second) -> doArithmetic . doDistributive op $ s
+                  (Variable op@(SupplyZeroing _), Second) -> doArithmetic . doDistributive op $ s
                   (Variable r, _) -> doDistributive r s
                   (Output Print, _) -> s { output = PrintV (egress s) }
                   (Output Bell, _) -> s { output = RingBell }
                   (Math l, _) -> s { operation = l }
               where
                 doDistributive :: VariableOperation -> EngineState -> EngineState
-                doDistributive op s@(MkState { ingress = (ing@(_, a'), b), egress = (ex, ex'), store = str, first = fst }) = case op of
-                  SupplyRetaining n -> if first s then s { first = not fst, ingress = ((str !! n, a'), b) }
-                                                   else s { first = not fst, ingress = (ing, str !! n) }
-                  SupplyZeroing n   -> if first s then s { first = not fst, ingress = ((str !! n, a'), b), store = str & ix n .~ 0 }
-                                                   else s { first = not fst, ingress = (ing, str !! n), store = str & ix n .~ 0 }
+                doDistributive op s@(MkState { ingress = (ing@(_, a'), b), egress = (ex, ex'), store = str }) = case op of
+                  SupplyRetaining n -> case axis s of
+                    First  -> s { axis = Second, ingress = ((str !! n, a'), b) }
+                    Second -> s { axis = First, ingress = (ing, str !! n) }
+                  SupplyZeroing n   -> case axis s of
+                    First -> s { axis = Second, ingress = ((str !! n, a'), b), store = str & ix n .~ 0 }
+                    Second -> s { axis = First, ingress = (ing, str !! n), store = str & ix n .~ 0 }
                   Store n           -> s { store = str & ix n .~ ex}
                   StorePrimed n     -> s { store = str & ix n .~ ex'}
                   _                 -> s
@@ -117,17 +119,17 @@ applyParameters params ops = filter (/= None) states
                 doArithmetic :: EngineState -> EngineState
                 doArithmetic s@(MkState { ingress = ((a, a'), b), egress = (_, ex')}) =
                   let (eAxis, lev) = case operation s of
-                        Addition      -> ((a + b, ex'), lever s)
-                        Subtraction -> ((a - b, ex'), (fst eAxis < 0) || lever s)
-                        Multiply -> ((a * b, ex'), lever s)
-                        Divide   -> ((a `div` b, a `mod` b), lever s)
+                        Addition    -> ((a + b, ex'), lever s)
+                        Subtraction -> ((a - b, ex'), (a - b < 0) || lever s)
+                        Multiply    -> ((a * b, ex'), lever s)
+                        Divide      -> ((a `div` b, a `mod` b), lever s)
                   in s { egress = eAxis, lever = lev }
 
 runProgram :: IO ()
 runProgram = do
   putStr "Please enter the name of the program to analyse [default]: " >> hFlush stdout
   input <- getLine
-  let programDirectory = "programs\\" ++ if input /= "" then input else "default"
+  let programDirectory = "programs\\" ++ if input /= "" then input else "square"
   arithmeticString <- readCard $ programDirectory ++ "\\operations.pc"
   numericFile <- readCard $ programDirectory ++ "\\parametric.pc"
   distributiveFile <- readCard $ programDirectory ++ "\\distributive.pc"
@@ -146,7 +148,7 @@ runProgram = do
   putStrLn $ "Initial Variables: " ++ show distributive
   putStrLn $ "Initial Parameters: " ++ show numbers
 
-  print . take 20 $ opChain
+  -- print . take 20 $ opChain
   mapM_ processOutput computedValues
 
   where
@@ -243,8 +245,8 @@ createProgram = do
           Just param -> getParams >>= return . (param:)
 
     writeCards :: String -> String -> [PunchCard] -> IO ()
-    writeCards name filename op = createAndWriteFile ("programs\\" ++ name ++ "\\" ++ filename ++ ".pc") 
-      $ T.unpack . T.intercalate "-\n" $ (T.pack . unlines <$> op) -- init removes the trailing \n 
+    writeCards name filename op = createAndWriteFile ("programs\\" ++ name ++ "\\" ++ filename ++ ".pc")
+      $ T.unpack . T.intercalate "-\n" $ (T.pack . unlines <$> op)
       where
         createAndWriteFile :: FilePath -> String -> IO ()
         createAndWriteFile path content = do
@@ -262,9 +264,11 @@ main :: IO ()
 main = do
   putStrLn "[r]un    - run a program"
   putStrLn "[c]reate - create a program"
+  putStrLn "[q]uit   - exit the program"
   input <- getLine :: IO String
-  if | ((input == "r") || (input == "return"))   -> runProgram
-     | ((input == "c") || (input == "create")) -> createProgram
+  if | ((input == "r") || (input == "return"))   -> runProgram >> main
+     | ((input == "c") || (input == "create")) -> createProgram >> main
+     | ((input == "q") || (input == "quit")) -> return ()
      | True              -> putStrLn "invalid selection" >> main
 
   return ()

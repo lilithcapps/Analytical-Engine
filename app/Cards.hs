@@ -116,8 +116,8 @@ parseOperation c
     | c == card storePrimed   = Variable UnboundStorePrimed
     | c == card forwards      = Variable UnboundForwards
     | c == card backwards     = Variable UnboundBackwards
-    | c == card forwardsCond  = Variable UnboundForwards
-    | c == card backwardsCond = Variable UnboundBackwards
+    | c == card forwardsCond  = Variable UnboundForwardsCond
+    | c == card backwardsCond = Variable UnboundBackwardsCond
     | otherwise             = error $ "unknown operation card: " ++ show c
 
 parseStringToOperation :: String -> Maybe OperationPunchCard
@@ -259,7 +259,7 @@ parseNumeric c = read $ (parseSign c) : parseCardNumber (tail <$> c) -- this rem
     parseSign [] = error "empty punchcard"
     parseSign c = case head . head $ c of
         '*' -> '-'
-        ' ' -> ' ' 
+        ' ' -> ' '
         _   -> error $ "badly formatted punchcard: " ++ show c
 
 parseCardNumber :: NumberPunchCard -> String
