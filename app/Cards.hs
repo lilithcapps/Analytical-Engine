@@ -1,11 +1,9 @@
-{-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE InstanceSigs       #-}
-{-# LANGUAGE MultiWayIf         #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE MultiWayIf   #-}
 module Cards where
 import           Control.Monad.State.Lazy (MonadState (get, put), State,
                                            evalState)
 import           Data.Char                (intToDigit, toLower)
-import           Data.Data                (Data)
 import           Text.Printf              (printf)
 import           Text.Read                (readMaybe)
 
@@ -16,7 +14,7 @@ type NumberPunchCard = PunchCard
 type OperationPunchCard = PunchCard
 
 data DistributiveRecord = MkOp {
-  name :: String,
+  cons :: UnboundOperation,
   card :: DistributivePunchCard
 }
 
@@ -28,6 +26,9 @@ processOperation f1 f2 f3 e = case e of
   Math a     -> f1 a
   Output a   -> f2 a
   Variable a -> f3 a
+
+showOp :: Show a => ProcessOperation a -> String
+showOp = processOperation show show show
 
 instance Functor ProcessOperation where
   fmap :: (a -> b) -> ProcessOperation a  -> ProcessOperation b
@@ -45,12 +46,20 @@ data ProcessOperation a = Math MathsOperation | Output OutputOperation | Variabl
 
 type Operation = ProcessOperation VariableOperation
 
-
-
 data MathsOperation = Addition | Subtraction | Multiply | Divide
-  deriving (Show, Data)
+instance Show MathsOperation where
+  show :: MathsOperation -> String
+  show Addition    = "addition"
+  show Subtraction = "subtraction"
+  show Multiply    = "multiplication"
+  show Divide      = "division"
+
 data OutputOperation = Print | Bell | Halt
-  deriving (Show, Data)
+instance Show OutputOperation where
+  show :: OutputOperation -> String
+  show Print = "print"
+  show Bell  = "bell"
+  show Halt  = "halt"
 
 data UnboundVariableOperation =
   UnboundSupplyRetaining
@@ -61,7 +70,18 @@ data UnboundVariableOperation =
   | UnboundForwardsCond
   | UnboundBackwards
   | UnboundBackwardsCond
-  deriving Show
+  deriving Enum
+
+instance Show UnboundVariableOperation where
+  show :: UnboundVariableOperation -> String
+  show UnboundSupplyRetaining = "loadPreserve"
+  show UnboundSupplyZeroing   = "loadZero"
+  show UnboundStore           = "store"
+  show UnboundStorePrimed     = "storePrimed"
+  show UnboundForwards        = "forwards"
+  show UnboundBackwards       = "backwards"
+  show UnboundForwardsCond    = "forwardsCond"
+  show UnboundBackwardsCond   = "backwardsCond"
 
 data VariableOperation =
   SupplyRetaining Int
@@ -72,7 +92,20 @@ data VariableOperation =
   | ForwardsCond Int
   | Backwards Int
   | BackwardsCond Int
-  deriving (Show, Data)
+  deriving (Show)
+
+toValEnum :: (Eq a, Num a) => a -> Int -> VariableOperation
+toValEnum num v = case num of
+  0 -> SupplyRetaining v
+  1 -> SupplyZeroing v
+  2 -> Store v
+  3 -> StorePrimed v
+  4 -> Forwards v
+  5 -> ForwardsCond v
+  6 -> Backwards v
+  7 -> BackwardsCond v
+  _ -> error ""
+
 
 bindOperations :: [Int] -> [UnboundOperation] -> [Operation]
 bindOperations vs us = operations
@@ -93,73 +126,31 @@ bindOperations vs us = operations
         get >>= \vars -> (\(v, e) -> put v >> return e) (vars, Output m)
 
       bindVariableOperation :: (Int, UnboundVariableOperation) -> VariableOperation
-      bindVariableOperation (n, UnboundSupplyRetaining) = SupplyRetaining n
-      bindVariableOperation (n, UnboundSupplyZeroing)   = SupplyZeroing n
-      bindVariableOperation (n, UnboundStore)           = Store n
-      bindVariableOperation (n, UnboundStorePrimed)     = StorePrimed n
-      bindVariableOperation (n, UnboundForwards)        = Forwards n
-      bindVariableOperation (n, UnboundBackwards)       = Backwards n
-      bindVariableOperation (n, UnboundForwardsCond)    = ForwardsCond n
-      bindVariableOperation (n, UnboundBackwardsCond)   = BackwardsCond n
+      bindVariableOperation (n, o) = toValEnum (fromEnum o) n
 
 parseOperation :: OperationPunchCard -> UnboundOperation
-parseOperation c
-    | c == card addition      = Math Addition
-    | c == card subtraction   = Math Subtraction
-    | c == card multiply      = Math Multiply
-    | c == card divide        = Math Divide
-    | c == card write         = Output Print
-    | c == card bell          = Output Bell
-    | c == card halt          = Output Halt
-    | c == card loadPreserve  = Variable UnboundSupplyRetaining
-    | c == card loadZero      = Variable UnboundSupplyZeroing
-    | c == card store         = Variable UnboundStore
-    | c == card storePrimed   = Variable UnboundStorePrimed
-    | c == card forwards      = Variable UnboundForwards
-    | c == card backwards     = Variable UnboundBackwards
-    | c == card forwardsCond  = Variable UnboundForwardsCond
-    | c == card backwardsCond = Variable UnboundBackwardsCond
-    | otherwise             = error $ "unknown operation card: " ++ show c
+parseOperation c =
+    let matchingOps = dropWhile (\o -> c /= card o) operations in
+    case matchingOps of
+      []    -> error $ "unknown operation card: " ++ show c
+      (o:_) -> cons o
 
 parseStringToOperation :: String -> Maybe OperationPunchCard
-parseStringToOperation s
-  | lower s == (lower . name) addition      = Just . card $ addition
-  | lower s == (lower . name) subtraction   = Just . card $ subtraction
-  | lower s == (lower . name) multiply      = Just . card $ multiply
-  | lower s == (lower . name) divide        = Just . card $ divide
-  | lower s == (lower . name) bell          = Just . card $ bell
-  | lower s == (lower . name) write         = Just . card $ write
-  | lower s == (lower . name) loadPreserve  = Just . card $ loadPreserve
-  | lower s == (lower . name) loadZero      = Just . card $ loadZero
-  | lower s == (lower . name) store         = Just . card $ store
-  | lower s == (lower . name) storePrimed   = Just . card $ storePrimed
-  | lower s == (lower . name) forwards      = Just . card $ forwards
-  | lower s == (lower . name) backwards     = Just . card $ backwards
-  | lower s == (lower . name) forwardsCond  = Just . card $ forwardsCond
-  | lower s == (lower . name) backwardsCond = Just . card $ backwardsCond
-  | otherwise                               = Nothing
+parseStringToOperation s =
+  let matchingOps = dropWhile (\o -> lower s /= (lower . showOp . cons) o) operations in
+  case matchingOps of
+    []    -> Nothing
+    (o:_) -> Just $ card o
   where
     lower :: (Functor f) => f Char -> f Char
     lower = fmap toLower
 
 parseOperationToString :: OperationPunchCard -> Maybe String
-parseOperationToString s
-  | s == card addition      = Just . name $ addition
-  | s == card subtraction   = Just . name $ subtraction
-  | s == card multiply      = Just . name $ multiply
-  | s == card divide        = Just . name $ divide
-  | s == card write         = Just . name $ write
-  | s == card bell          = Just . name $ bell
-  | s == card halt          = Just . name $ halt
-  | s == card loadPreserve  = Just . name $ loadPreserve
-  | s == card loadZero      = Just . name $ loadZero
-  | s == card store         = Just . name $ store
-  | s == card storePrimed   = Just . name $ storePrimed
-  | s == card forwards      = Just . name $ forwards
-  | s == card backwards     = Just . name $ backwards
-  | s == card forwardsCond  = Just . name $ forwardsCond
-  | s == card backwardsCond = Just . name $ backwardsCond
-  | otherwise               = Nothing
+parseOperationToString s =
+  let matchingOps = dropWhile (\o -> s /= card o) operations in
+    case matchingOps of
+      []    -> Nothing
+      (o:_) -> Just . showOp . cons $ o
 
 parseStringToVariable :: String -> Maybe NumberPunchCard
 parseStringToVariable a =
@@ -190,9 +181,9 @@ parseStringToParameter a =
 
 
 transpose :: [[Char]] -> [[Char]]
-transpose ((a:b:c:d:e:f:g:h:i:j:_) : rest) =
-  let (a1:b1:c1:d1:e1:f1:g1:h1:i1:j1:_) = transpose rest in
-    [a:a1, b:b1, c:c1, d:d1, e:e1, f:f1, g:g1, h:h1, i:i1, j:j1]
+transpose ([a, b, c, d, e, f, g, h, i, j] : rest) =
+  let [a', b', c', d', e', f', g', h', i', j'] = transpose rest in
+    [a:a', b:b', c:c', d:d', e:e', f:f', g:g', h:h', i:i', j:j']
 transpose _ = [[],[],[],[],[],[],[],[],[],[]]
 
 parseCharToNumCard :: Char -> [Char]
@@ -210,47 +201,33 @@ parseCharToNumCard s = case s of
   _   -> error "unreachable code?"
 
 isDistributive :: OperationPunchCard -> Bool
-isDistributive a
-  | a == card loadPreserve = True
-  | a == card loadZero = True
-  | a == card store = True
-  | a == card storePrimed = True
-  | a == card forwards = True
-  | a == card backwards = True
-  | a == card forwardsCond = True
-  | a == card backwardsCond = True
-  | otherwise = False
+isDistributive a =
+  let dists = filter (\o -> case cons o of
+        Variable _ -> True
+        _          -> False) operations in
+  let matchingOps = dropWhile (\o -> a /= card o) dists in
+  case matchingOps of
+    [] -> False
+    _  -> True
 
-addition      :: DistributiveRecord
-subtraction   :: DistributiveRecord
-multiply      :: DistributiveRecord
-divide        :: DistributiveRecord
-write         :: DistributiveRecord
-bell          :: DistributiveRecord
-halt          :: DistributiveRecord
-loadPreserve  :: DistributiveRecord
-loadZero      :: DistributiveRecord
-store         :: DistributiveRecord
-storePrimed   :: DistributiveRecord
-forwards      :: DistributiveRecord
-backwards     :: DistributiveRecord
-forwardsCond  :: DistributiveRecord
-backwardsCond :: DistributiveRecord
-addition      = MkOp "addition" ["* ", "  ", "  ", "  ", "  "]
-subtraction   = MkOp "subtraction" [" *", "  ", "  ", "  ", "  "]
-multiply      = MkOp "multiplication" ["  ", "* ", "  ", "  ", "  "]
-divide        = MkOp "division" ["  ", " *", "  ", "  ", "  "]
-write         = MkOp "print" ["  ", "  ", "  ", " *", " *"]
-bell          = MkOp "bell" ["  ", "  ", "  ", "* ", "* "]
-halt          = MkOp "halt" ["  ", "  ", "  ", "**", "**"]
-loadPreserve  = MkOp "loadPreserve" ["  ", "  ", "* ", "  ", "  "]
-loadZero      = MkOp "loadZero" ["  ", "  ", " *", "  ", "  "]
-store         = MkOp "store" ["  ", "  ", "  ", "* ", "  "]
-storePrimed   = MkOp "storePrimed" ["  ", "  ", "  ", " *", "  "]
-forwards      = MkOp "forwards" ["* ", "  ", "  ", "  ", "* "]
-backwards     = MkOp "backwards" [" *", "  ", "  ", "  ", "* "]
-forwardsCond  = MkOp "forwardsCond" ["* ", "  ", "  ", "  ", " *"]
-backwardsCond = MkOp "backwardsCond" [" *", "  ", "  ", "  ", " *"]
+operations :: [DistributiveRecord]
+operations      = [
+  MkOp (Math Addition) ["* ", "  ", "  ", "  ", "  "],
+  MkOp (Math Subtraction) [" *", "  ", "  ", "  ", "  "],
+  MkOp (Math Multiply) ["  ", "* ", "  ", "  ", "  "],
+  MkOp (Math Divide) ["  ", " *", "  ", "  ", "  "],
+  MkOp (Output Print) ["  ", "  ", "  ", " *", " *"],
+  MkOp (Output Bell) ["  ", "  ", "  ", "* ", "* "],
+  MkOp (Output Halt) ["  ", "  ", "  ", "**", "**"],
+  MkOp (Variable UnboundSupplyRetaining) ["  ", "  ", "* ", "  ", "  "],
+  MkOp (Variable UnboundSupplyZeroing) ["  ", "  ", " *", "  ", "  "],
+  MkOp (Variable UnboundStore) ["  ", "  ", "  ", "* ", "  "],
+  MkOp (Variable UnboundStorePrimed) ["  ", "  ", "  ", " *", "  "],
+  MkOp (Variable UnboundForwards) ["* ", "  ", "  ", "  ", "* "],
+  MkOp (Variable UnboundBackwards) [" *", "  ", "  ", "  ", "* "],
+  MkOp (Variable UnboundForwardsCond) ["* ", "  ", "  ", "  ", " *"],
+  MkOp (Variable UnboundBackwardsCond) [" *", "  ", "  ", "  ", " *"]
+  ]
 
 parseVariable :: DistributivePunchCard -> Int
 parseVariable = read . parseCardNumber

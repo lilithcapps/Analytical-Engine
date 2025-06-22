@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 {-# OPTIONS_GHC -Wno-unused-local-binds #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE MultiWayIf        #-}
 
 import           Cards                    (DistributiveRecord (..),
@@ -18,6 +19,7 @@ import qualified Cards                    as C
 import           Control.Monad.State.Lazy
 import           Data.Data                (Data (toConstr), showConstr)
 import           Data.Functor             ((<&>))
+import           Data.List                (intercalate)
 import           Data.Maybe               (fromMaybe)
 import qualified Data.Text.Lazy           as T
 import qualified Data.Text.Lazy.IO        as IO
@@ -76,30 +78,23 @@ createProgram = do
   -- putStrLn "[c]reate - create a program"
   -- putStrLn "[e]dit   - edit a program"
   -- opt <- getLine
+  let opCons = map cons C.operations
+  let mathOpNames = map C.showOp $ filter (\case { C.Math _ -> True; _ -> False}) opCons
+  let outOpNames = map C.showOp $ filter (\case { C.Output _ -> True; _ -> False}) opCons
+  let varOpNames = map C.showOp $ filter (\case { C.Variable _ -> True; _ -> False}) opCons
+
   putStr "enter the program name: " >> hFlush stdout
   n <- getLine
   putStrLn "enter the operations"
   putStrLn "press enter after each operation"
   putStrLn "press enter with no input when you have entered all the required operations"
   putStrLn $ "valid operations are: "
-      ++ "\n\t mathematical: "
-      ++ name C.addition ++ " | "
-      ++ name C.subtraction ++ " | "
-      ++ name C.multiply ++ " | "
-      ++ name C.divide
-      ++ "\n\t informational: "
-      ++ name C.write ++ " | "
-      ++ name C.bell ++ " | "
-      ++ name C.halt
-      ++ "\n\t distributive: "
-      ++ name C.loadPreserve ++ " | "
-      ++ name C.loadZero ++ " | "
-      ++ name C.store ++ " | "
-      ++ name C.storePrimed ++ " | "
-      ++ name C.forwards ++ " | "
-      ++ name C.backwards ++ " | "
-      ++ name C.forwardsCond ++ " | "
-      ++ name C.backwardsCond
+      ++ "\n mathematical: \n\t"
+      ++ intercalate " | " mathOpNames
+      ++ "\n informational: \n\t"
+      ++ intercalate " | " outOpNames
+      ++ "\n distributive: \n\t"
+      ++ intercalate " | " varOpNames
 
   ops <- getOps
   _ <- writeCards n "operations" ops
@@ -152,7 +147,7 @@ createProgram = do
 
     writeCards :: String -> String -> [PunchCard] -> IO ()
     writeCards name filename op = createAndWriteFile ("programs\\" ++ name ++ "\\" ++ filename ++ ".pc")
-      $ T.unpack . T.intercalate "-\n" $ (T.pack . unlines <$> op)
+      $ intercalate "-\n" $ unlines <$> op
       where
         createAndWriteFile :: FilePath -> String -> IO ()
         createAndWriteFile path content = do
